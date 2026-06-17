@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# 산출물 / 캐시 (Chroma 인덱스, HF 캐시)
+outputs/
+hf_cache/
+*.log
+
+# 모델 / 영상 데이터 (대용량)
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.pt
+*.bin
+*.safetensors
+
+# 환경 변수
+.env
+.env.*
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
