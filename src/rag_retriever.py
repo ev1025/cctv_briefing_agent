@@ -51,7 +51,13 @@ class TextEmbedder:
         if self._model is None:
             from sentence_transformers import SentenceTransformer
             print(f"[EMBED] 로딩: {self.model_id} device={self.device}", flush=True)
-            self._model = SentenceTransformer(self.model_id, device=self.device)
+            try:
+                # safetensors 우선: torch<2.6 에서 .bin(torch.load)이 CVE 로 차단되는 문제 회피.
+                self._model = SentenceTransformer(
+                    self.model_id, device=self.device,
+                    model_kwargs={"use_safetensors": True})
+            except Exception:
+                self._model = SentenceTransformer(self.model_id, device=self.device)
         return self
 
     def encode(self, texts):
