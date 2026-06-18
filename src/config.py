@@ -84,7 +84,40 @@ LOOKBACK_MAX_HOURS = float(os.environ.get("LOOKBACK_MAX_HOURS", "24"))
 RAG_TOP_K = int(os.environ.get("RAG_TOP_K", "5"))
 SEARCH_MIN_SCORE = float(os.environ.get("SEARCH_MIN_SCORE", "0.45"))   # cosine 유사도 하한
 
-# === 7) 프롬프트 ===
+# === 7) 프론트엔드 / 샘플 ===
+FRONTEND_DIR = os.path.join(PROJECT_DIR, "frontend")
+#   데모용 열화상/실화상 페어 폴더. 개인 절대경로는 커밋하지 않음(기본 samples/, env SAMPLE_DIR 로 지정).
+SAMPLE_DIR = os.environ.get("SAMPLE_DIR", os.path.join(PROJECT_DIR, "samples"))
+
+# === 8) 프롬프트 (오경보 필터) ===
+#   열화상 핫스팟 정체를 실화상에서 식별 -> 정상 발열(오경보) vs 과열 이상(위험). 도메인 중립. JSON 강제.
+VERIFY_SYSTEM_PROMPT = (
+    "너는 산업 현장의 열화상 기반 화재 조기경보를 판정하는 AI 관제사다. "
+    "첫 번째 이미지는 열화상 카메라 영상으로, 뜨거운 곳일수록 밝거나 붉게 표시된다. "
+    "두 번째 이미지는 같은 시각·같은 위치를 찍은 실화상(RGB) 영상이다. "
+    "열화상에서 가장 뜨거운 부분(핫스팟)의 위치를 실화상에서 찾아, 그 자리에 있는 객체가 무엇인지 식별하라. "
+    "햇빛 반사, 조명, 사람, 정상 가동 중인 표면 발열 등 일상적이고 정상적인 열원이면 오경보로 판단하고, "
+    "주변보다 비정상적으로 과열된 설비(예: 과열된 배터리·전기 패널)처럼 화재로 번질 수 있는 열원이면 위험으로 판단하라."
+)
+VERIFY_USER_PROMPT = (
+    "위 두 이미지를 분석해 핫스팟의 정체를 식별하고 화재 위험 여부를 판정하라.\n"
+    "반드시 아래 JSON 형식으로만 답하라(다른 텍스트·설명·코드펜스 금지):\n"
+    '{"status": "FALSE_ALARM 또는 DANGER", "identified_heat_source": "식별된 객체명", "reasoning": "판단 근거"}'
+)
+#   JSON 출력 강제: lm-format-enforcer 로 디코딩을 스키마에 묶어 '항상 유효한 JSON' 보장.
+#   미설치/비활성 시 프롬프트 + 정규식 파서로 폴백(vlm_analyzer._parse_verdict).
+VLM_ENFORCE_JSON = os.environ.get("VLM_ENFORCE_JSON", "1") == "1"
+VERIFY_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "status": {"type": "string", "enum": ["FALSE_ALARM", "DANGER"]},
+        "identified_heat_source": {"type": "string"},
+        "reasoning": {"type": "string"},
+    },
+    "required": ["status", "identified_heat_source", "reasoning"],
+}
+
+# === 9) (구) 브리핑 프롬프트 — RAG(rag_retriever) 보존용, verify 플로우 미사용 ===
 #   현재 상황 분석(VLM): 보이는 위험 요소만 객관적으로 묘사(추측/부정 echo 금지).
 VLM_PROMPT = (
     "당신은 화재 알람이 울린 CCTV 현장을 분석하는 AI 입니다.\n"
@@ -105,8 +138,8 @@ BRIEFING_USE_LLM = os.environ.get("BRIEFING_USE_LLM", "1") == "1"
 #   브리핑 합성(LLM): 현재 + 과거 전조 -> 관제 브리핑. (단계 4에서 사용)
 BRIEFING_PROMPT = (
     "다음은 화재 알람이 발생한 CCTV 현장의 '현재 상황 분석' 과 '과거 전조 이력' 입니다.\n\n"
-    "[현재 상황]\n{current_status}\n\n"
-    "[과거 전조 이력]\n{precursor_history}\n\n"
+    "현재 상황 :\n{current_status}\n\n"
+    "과거 전조 이력 : \n{precursor_history}\n\n"
     "위 두 정보를 종합하여, 관제 요원이 즉시 읽을 수 있는 한국어 '상황 브리핑' 을 작성하세요. "
     "현재 위험 요약, 과거 전조와의 연관성, 권고 조치를 3~5문장으로 간결하게 적으세요."
 )

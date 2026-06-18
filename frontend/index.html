@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>열화상 오경보 필터</title>
+<!-- 테마 차용: cctv_memory 다크 관제 테마(blue 데이터 + amber/red 알림 · Fira) -->
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+:root{
+  --bg:#0a0d14; --panel:#12161f; --panel2:#171c28; --line:#232a39; --line2:#2e3850;
+  --fg:#e6e9f0; --mut:#8b93a7; --mut2:#5f6678;
+  --blue:#5b9dff; --blue-deep:#1e40af; --amber:#ffb020; --red:#ff5a5a; --green:#36d399;
+  --crit-bg:rgba(255,90,90,.13); --ok-bg:rgba(54,211,153,.12);
+  --mono:"Fira Code",ui-monospace,monospace; --radius:9px;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:14px/1.55 "Fira Sans",system-ui,sans-serif;-webkit-font-smoothing:antialiased;}
+button,input,select{font-family:inherit;}
+.topbar{display:flex;align-items:center;gap:16px;padding:16px 26px;
+  border-bottom:1px solid var(--line);background:linear-gradient(180deg,#0d111a,#0a0d14);}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:16px;}
+.brand .dot{width:9px;height:9px;border-radius:50%;background:var(--red);
+  box-shadow:0 0 10px var(--red);animation:pulse 1.6s infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.sub-brand{color:var(--mut);font-size:12.5px;}
+.spacer{flex:1;}
+.api-pill{font-family:var(--mono);font-size:11.5px;color:var(--mut);
+  background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:5px 10px;}
+
+.layout{display:grid;grid-template-columns:340px minmax(0,1fr);gap:16px;padding:18px 22px;align-items:start;}
+@media(max-width:1000px){.layout{grid-template-columns:1fr;}}
+.col{display:flex;flex-direction:column;gap:14px;min-width:0;}
+.card-box{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);}
+.box-title{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.06em;
+  padding:12px 14px 9px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line);}
+.box-title .n{color:var(--blue);font-family:var(--mono);}
+.box-title.thermal{color:var(--amber);} .box-title.rgb{color:var(--blue);}
+.box-body{padding:13px 14px;}
+
+.field{margin-bottom:11px;}
+.field label{display:block;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px;}
+.field input,.field select{width:100%;background:var(--panel2);border:1px solid var(--line2);
+  color:var(--fg);padding:9px 11px;border-radius:7px;font-size:12.5px;font-family:var(--mono);color-scheme:dark;}
+.field input:focus,.field select:focus{outline:none;border-color:var(--blue);}
+.go{width:100%;background:var(--blue-deep);color:#fff;border:0;padding:11px;border-radius:8px;
+  cursor:pointer;font-weight:700;font-size:14px;transition:background .15s;}
+.go:hover{background:#2552d6;} .go:disabled{opacity:.55;cursor:default;}
+.timing{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px;}
+.chip{font-family:var(--mono);font-size:11.5px;color:var(--mut);background:var(--panel2);
+  border:1px solid var(--line);border-radius:14px;padding:4px 10px;}
+.chip b{color:var(--blue);font-weight:700;}
+
+/* 2화면: 열화상 + 실화상 */
+.img2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+@media(max-width:680px){.img2{grid-template-columns:1fr;}}
+.imgwrap{background:#000;border-radius:0 0 8px 8px;min-height:240px;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+.imgwrap img{width:100%;height:100%;object-fit:contain;display:block;}
+.imgwrap .ph{color:var(--mut2);font-size:12px;}
+
+/* 판정 결과 */
+.badge{display:inline-block;font-weight:800;font-size:16px;letter-spacing:.02em;
+  padding:9px 18px;border-radius:10px;margin-bottom:12px;}
+.badge.danger{background:var(--crit-bg);color:var(--red);border:1px solid rgba(255,90,90,.45);}
+.badge.false{background:var(--ok-bg);color:var(--green);border:1px solid rgba(54,211,153,.4);}
+.badge.none{background:var(--panel2);color:var(--mut);border:1px solid var(--line2);}
+.badge.unknown{background:rgba(255,176,32,.13);color:var(--amber);border:1px solid rgba(255,176,32,.4);}
+.vrow{display:flex;gap:10px;margin:6px 0;font-size:13px;}
+.vlbl{color:var(--mut);min-width:64px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;padding-top:2px;}
+.vval{color:var(--fg);} .vval.mono{font-family:var(--mono);}
+.reason{margin-top:12px;background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--blue);
+  border-radius:8px;padding:12px 13px;white-space:pre-wrap;font-size:13.5px;line-height:1.65;color:var(--fg);}
+.reason.danger{border-left-color:var(--red);} .reason.false{border-left-color:var(--green);}
+.err{color:var(--red);background:var(--crit-bg);border:1px solid rgba(255,90,90,.3);border-radius:8px;padding:11px 13px;font-size:13px;}
+::-webkit-scrollbar{width:9px;height:9px;}::-webkit-scrollbar-thumb{background:var(--line2);border-radius:5px;}
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><span class="dot"></span> 열화상 오경보 필터</div>
+    <span class="sub-brand">열화상 × 실화상 멀티모달 크로스체크 (Qwen3-VL)</span>
+    <span class="spacer"></span>
+    <span class="api-pill">POST /api/v1/verify-fire-alarm</span>
+  </div>
+
+  <div class="layout">
+    <!-- 좌: 입력 -->
+    <div class="col">
+      <div class="card-box">
+        <div class="box-title">🔥 알람 프레임 선택</div>
+        <div class="box-body">
+          <div class="field"><label>샘플 페어</label><select id="pair"></select></div>
+          <div class="field"><label>camera_id</label><input id="camera" value="CAM_T1" /></div>
+          <div class="field"><label>thermal_image_path</label><input id="thPath" /></div>
+          <div class="field"><label>rgb_image_path</label><input id="rgbPath" /></div>
+          <div class="field"><label>thermal_csv_path (선택)</label><input id="csvPath" /></div>
+          <button class="go" id="go" onclick="run()">오경보 판정</button>
+          <div class="timing" id="timing"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 우: 2화면 + 판정 -->
+    <div class="col">
+      <div class="img2">
+        <div class="card-box">
+          <div class="box-title thermal">열화상 (Thermal) <span class="n" id="thName"></span></div>
+          <div class="imgwrap"><img id="imgThermal" alt="" onerror="this.style.display='none'" /><span class="ph" id="thPh">미선택</span></div>
+        </div>
+        <div class="card-box">
+          <div class="box-title rgb">실화상 (RGB) <span class="n" id="rgbName"></span></div>
+          <div class="imgwrap"><img id="imgRgb" alt="" onerror="this.style.display='none'" /><span class="ph" id="rgbPh">미선택</span></div>
+        </div>
+      </div>
+
+      <div class="card-box">
+        <div class="box-title">판정 결과 <span class="n">verdict</span></div>
+        <div class="box-body">
+          <span id="badge" class="badge none">대기</span>
+          <div class="vrow"><span class="vlbl">발열체</span><span class="vval" id="heatSrc">-</span></div>
+          <div class="vrow"><span class="vlbl">온도</span><span class="vval mono" id="tempSum">-</span></div>
+          <div class="reason" id="reason">프레임을 선택하고 [오경보 판정]을 누르세요.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const basename = (p) => (p||'').split(/[\\/]/).pop();
+const esc = (s) => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+let PAIRS = [];
+
+const imgUrl = (p) => '/api/v1/image?path=' + encodeURIComponent(p || '');
+
+function showImg(imgEl, phEl, nameEl, path){
+  if(path){ imgEl.src = imgUrl(path); imgEl.style.display='block'; phEl.style.display='none'; nameEl.textContent = basename(path); }
+  else { imgEl.removeAttribute('src'); imgEl.style.display='none'; phEl.style.display='block'; nameEl.textContent=''; }
+}
+
+function selectPair(i){
+  const p = PAIRS[i]; if(!p) return;
+  $('thPath').value = p.thermal || '';
+  $('rgbPath').value = p.rgb || '';
+  $('csvPath').value = p.csv || '';
+  showImg($('imgThermal'), $('thPh'), $('thName'), p.thermal);
+  showImg($('imgRgb'), $('rgbPh'), $('rgbName'), p.rgb);
+}
+
+async function loadPairs(){
+  try{
+    const j = await (await fetch('/api/v1/samples')).json();
+    PAIRS = j.pairs || [];
+    const sel = $('pair'); sel.innerHTML = '';
+    if(!PAIRS.length){ sel.innerHTML = '<option value="">(샘플 없음 — 경로 직접 입력)</option>'; return; }
+    PAIRS.forEach((p, i) => {
+      const o = document.createElement('option'); o.value = i; o.textContent = p.id + (p.csv ? ' (csv✓)' : '');
+      sel.appendChild(o);
+    });
+    sel.onchange = () => selectPair(+sel.value);
+    selectPair(0);
+  }catch(e){ /* 무시 */ }
+}
+
+function setBadge(status){
+  const b = $('badge');
+  if(status === 'DANGER'){ b.className='badge danger'; b.textContent='🔴 위험 (DANGER)'; }
+  else if(status === 'FALSE_ALARM'){ b.className='badge false'; b.textContent='🟢 오경보 (FALSE_ALARM)'; }
+  else { b.className='badge unknown'; b.textContent='⚠ ' + (status||'UNKNOWN'); }
+  return b.className.includes('danger') ? 'danger' : (b.className.includes('false') ? 'false' : '');
+}
+
+async function run(){
+  const body = {
+    camera_id: $('camera').value.trim(),
+    thermal_image_path: $('thPath').value.trim(),
+    rgb_image_path: $('rgbPath').value.trim(),
+  };
+  if($('csvPath').value.trim()) body.thermal_csv_path = $('csvPath').value.trim();
+  $('go').disabled = true; $('go').textContent = '판정 중…';
+  $('badge').className='badge none'; $('badge').textContent='⏳ 크로스체크 중… (GPU)';
+  $('reason').className='reason'; $('reason').textContent='열화상 핫스팟을 실화상에서 식별하는 중…';
+  $('timing').innerHTML='';
+  try{
+    const r = await fetch('/api/v1/verify-fire-alarm', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    if(!r.ok){ throw new Error(r.status + ' ' + await r.text()); }
+    const j = await r.json();
+    const cls = setBadge(j.status);
+    $('heatSrc').textContent = j.identified_heat_source || '-';
+    $('tempSum').textContent = j.temp_summary || '(CSV 미입력)';
+    $('reason').className = 'reason ' + cls;
+    $('reason').textContent = j.reasoning || '(없음)';
+    const t = j.timing || {};
+    $('timing').innerHTML = '<span class="chip">VLM <b>'+(((t.vlm_ms||0)/1000).toFixed(1))+'s</b></span>';
+  }catch(e){
+    $('badge').className='badge none'; $('badge').textContent='실패';
+    $('reason').className='reason'; $('reason').innerHTML='<div class="err">'+esc(e.message||e)+'</div>';
+  }finally{ $('go').disabled=false; $('go').textContent='오경보 판정'; }
+}
+
+$('pair'); loadPairs();
+</script>
+</body>
+</html>

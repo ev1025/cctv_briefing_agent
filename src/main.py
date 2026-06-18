@@ -4,8 +4,11 @@
 """
 from . import config  # noqa: F401  (env-before-torch: 반드시 최상단)
 
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from .api import router
 
@@ -14,6 +17,15 @@ app.add_middleware(
     CORSMiddleware, allow_origins=["*"],
     allow_methods=["*"], allow_headers=["*"])
 app.include_router(router)
+
+
+@app.get("/")
+def index():
+    """프론트엔드(단일 HTML) 서빙. cctv_memory 다크 관제 테마 차용."""
+    p = os.path.join(config.FRONTEND_DIR, "index.html")
+    if os.path.isfile(p):
+        return FileResponse(p)
+    return {"service": "cctv_briefing_agent", "docs": "/docs"}
 
 
 @app.get("/health")
