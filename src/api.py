@@ -77,19 +77,35 @@ _BENIGN_KEYWORDS = ("사람", "행인", "작업자", "조명", "전등", "햇빛
 
 
 def run_verify(thermal_path, rgb_path, csv_path=None):
-    """열화상+실화상+온도 융합 판정. eval/endpoint 공용.
+    """열화상 알람 검증. 온도 1차 게이트 -> 위험 후보만 VLM 2차 크로스체크.
 
-    결정 규칙(온도 CSV 있을 때):
-      - 핫스팟 ΔT < 임계  -> FALSE_ALARM (정량적으로 과열 아님; 열화상 알람의 1차 게이트)
-      - ΔT >= 임계        -> DANGER, 단 VLM 이 명백한 양성 열원(사람·조명·햇빛 반사)으로 식별하면 FALSE_ALARM 으로 강등
-    CSV 없으면 VLM 판정을 그대로 사용.
+    순서(온도 CSV 있을 때):
+      1) 핫스팟 ΔT < 임계  -> 즉시 FALSE_ALARM (VLM 생략, ~0초; 과열 아님)
+      2) ΔT >= 임계        -> VLM 실행 -> 양성 열원(사람·조명·햇빛 반사)이면 FALSE_ALARM, 아니면 DANGER
+    CSV 없으면 게이트 없이 VLM 판정을 그대로 사용.
     """
     import time
     from . import vlm_analyzer
 
     tf = _thermal_features(csv_path) if (csv_path and os.path.isfile(csv_path)) else None
-    temp_summary = tf["summary"] if tf else None
 
+    # 1차 게이트: 온도가 임계 미만이면 VLM 안 돌리고 즉시 오경보(비용 절감)
+    if tf is not None and tf["dt"] < config.THERMAL_DANGER_DELTA_C:
+        thr = config.THERMAL_DANGER_DELTA_C
+        return {
+            "status": "FALSE_ALARM",
+            "vlm_status": None,
+            "identified_heat_source": None,
+            "reasoning": f"핫스팟 ΔT +{tf['dt']:.1f}°C 로 임계(+{thr:.0f}°C) 미만 → 정상 작동 발열(VLM 생략).",
+            "temp_summary": tf["summary"],
+            "thermal_dt": round(tf["dt"], 1),
+            "decision_source": "thermal_gate(저ΔT·VLM생략)",
+            "raw": None,
+            "timing": {"vlm_ms": 0, "total_ms": 0},
+        }
+
+    # 2차: 게이트 통과(또는 CSV 없음) -> VLM 크로스체크
+    temp_summary = tf["summary"] if tf else None
     t0 = time.time()
     v = vlm_analyzer.verify_fire_alarm(thermal_path, rgb_path, temp_summary)
     vlm_ms = round((time.time() - t0) * 1000)
@@ -98,12 +114,7 @@ def run_verify(thermal_path, rgb_path, csv_path=None):
     if tf is not None:
         text = f"{v.get('identified_heat_source', '')} {v.get('reasoning', '')}"
         benign = any(k in text for k in _BENIGN_KEYWORDS)
-        if tf["dt"] < config.THERMAL_DANGER_DELTA_C:
-            status, source = "FALSE_ALARM", "thermal_gate(저ΔT)"
-        elif benign:
-            status, source = "FALSE_ALARM", "vlm_override(양성열원)"
-        else:
-            status, source = "DANGER", "thermal+vlm"
+        status, source = ("FALSE_ALARM", "vlm_override(양성열원)") if benign else ("DANGER", "thermal+vlm")
 
     return {
         "status": status,

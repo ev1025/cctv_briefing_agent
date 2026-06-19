@@ -2,7 +2,7 @@
 
 Qwen3-VL-2B 로 열화상 1장 + 정합 실화상(RGB) 1장을 동시에 보고,
 열화상 핫스팟의 정체를 실화상에서 식별해 오경보(FALSE_ALARM) / 위험(DANGER)을 판정한다.
-출력은 JSON {status, identified_heat_source, reasoning}.
+출력은 JSON {status, identified_heat_source, reasoning} (lm-format-enforcer 로 스키마 강제).
 
   - 모델/프로세서는 모듈 싱글톤(1회 로드), GPU 는 Lock 으로 직렬 사용.
   - 이미지 2장은 qwen-vl-utils(process_vision_info) 로 추출, 실패 시 PIL 직접 전달 폴백.
@@ -17,7 +17,6 @@ from . import config  # noqa: F401  (env-before-torch: 최상단)
 
 _MODEL = None
 _PROCESSOR = None
-_KO_LP = None                 # 한국어 강제 LogitsProcessor 캐시(옵션)
 _JSON_FN = None               # lm-format-enforcer prefix_allowed_tokens_fn 캐시
 _JSON_FN_BUILT = False
 _LOAD_LOCK = threading.Lock()  # 모델 로드 직렬화
@@ -52,42 +51,14 @@ def _load_model():
         else:
             load_kwargs.update(torch_dtype=dtype, device_map=device)
 
-        # AutoModelForImageTextToText 는 체크포인트 config.architectures 를 보고 올바른 클래스를
-        #   고른다(Qwen3-VL -> Qwen3VL..., Qwen2.5-VL -> Qwen2_5_VL...). 전용 클래스를 하드코딩하면
-        #   Qwen3 체크포인트를 Qwen2.5 클래스로 '오류 없이' 잘못 로드해 generate 시 깨진다.
+        # 전용 클래스 하드코딩 금지: Auto 가 체크포인트에 맞는 클래스를 고른다
+        #   (하드코딩하면 다른 아키텍처를 '오류 없이' 잘못 로드해 generate 시 깨짐).
         from transformers import AutoModelForImageTextToText
-        model = AutoModelForImageTextToText.from_pretrained(hf_id, **load_kwargs)
-        model.eval()
+        model = AutoModelForImageTextToText.from_pretrained(hf_id, **load_kwargs).eval()
 
         _PROCESSOR, _MODEL = processor, model
         print(f"[VLM] loaded {hf_id} device={device} dtype={dtype} 4bit={quant is not None}", flush=True)
         return _PROCESSOR, _MODEL
-
-
-# ── 한국어 강제 (옵션, 기본 off) ──────────────────────────────────────────────
-def _get_korean_lp(processor, device):
-    """한자 포함 토큰의 logits 를 -inf 로 막는 LogitsProcessorList(1회 계산 후 캐시)."""
-    global _KO_LP
-    if _KO_LP is not None:
-        return _KO_LP
-    import torch
-    from transformers import LogitsProcessor, LogitsProcessorList
-
-    han = re.compile(r"[㐀-䶿一-鿿豈-﫿\U00020000-\U0002fa1f]")
-    tok = getattr(processor, "tokenizer", None) or processor
-    ban = [i for i in range(len(tok)) if han.search(tok.decode([i]))]
-    if not ban:
-        _KO_LP = LogitsProcessorList([])
-        return _KO_LP
-    ban_t = torch.tensor(sorted(ban), dtype=torch.long, device=device)
-
-    class _BanHan(LogitsProcessor):
-        def __call__(self, input_ids, scores):
-            scores[:, ban_t[ban_t < scores.shape[-1]]] = float("-inf")
-            return scores
-
-    _KO_LP = LogitsProcessorList([_BanHan()])
-    return _KO_LP
 
 
 # ── JSON 출력 강제 (lm-format-enforcer, 1회 빌드 후 캐시) ──────────────────────
@@ -102,7 +73,7 @@ def _json_prefix_fn(processor):
         return None
     try:
         # transformers 5.x 에서 PreTrainedTokenizerBase 위치가 바뀌어 lm-format-enforcer
-        #   integration import 가 깨진다(타입힌트용일 뿐) -> tokenization_utils 에 심볼 주입(shim).
+        #   integration import 가 깨진다(타입힌트용) -> tokenization_utils 에 심볼 주입(shim).
         import transformers
         import transformers.tokenization_utils as _tu
         if not hasattr(_tu, "PreTrainedTokenizerBase"):
@@ -115,7 +86,7 @@ def _json_prefix_fn(processor):
             tok, JsonSchemaParser(config.VERIFY_JSON_SCHEMA))
         print("[VLM] JSON 출력 강제 ON (lm-format-enforcer)", flush=True)
     except Exception as e:
-        print(f"[VLM] JSON 강제 비활성(lm-format-enforcer 없음/실패) -> 정규식 폴백: {e}", flush=True)
+        print(f"[VLM] JSON 강제 비활성 -> 정규식 폴백: {e}", flush=True)
         _JSON_FN = None
     return _JSON_FN
 
@@ -177,7 +148,7 @@ def verify_fire_alarm(thermal_image_path, rgb_image_path, temp_summary=None):
     text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
     images = [thermal, rgb]
-    try:  # qwen-vl-utils 로 비전 입력 추출(스펙 권장), 실패 시 PIL 직접 전달
+    try:  # qwen-vl-utils 로 비전 입력 추출, 실패 시 PIL 직접 전달
         from qwen_vl_utils import process_vision_info
         imgs, _ = process_vision_info(messages)
         if imgs:
@@ -191,10 +162,6 @@ def verify_fire_alarm(thermal_image_path, rgb_image_path, temp_summary=None):
         in_len = inputs.input_ids.shape[1]
         gen_kwargs = dict(max_new_tokens=config.VLM_MAX_NEW_TOKENS,
                           repetition_penalty=config.VLM_REPETITION_PENALTY, do_sample=False)
-        if config.VLM_FORCE_KOREAN:
-            lp = _get_korean_lp(processor, model.device)
-            if len(lp) > 0:
-                gen_kwargs["logits_processor"] = lp
         prefix_fn = _json_prefix_fn(processor)   # lm-format-enforcer 로 JSON 스키마 강제
         if prefix_fn is not None:
             gen_kwargs["prefix_allowed_tokens_fn"] = prefix_fn

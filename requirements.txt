@@ -4,7 +4,7 @@
 torch>=2.4.0
 torchvision>=0.19.0
 
-# === VLM (현재 상황 분석: 기본 Qwen3-VL-2B-Instruct, env 로 Qwen2.5-VL-3B 교체 가능) ===
+# === VLM (기본 Qwen3-VL-2B-Instruct, env 로 Qwen2.5-VL-3B 교체 가능) ===
 transformers>=4.49.0
 qwen-vl-utils>=0.0.8
 accelerate>=1.0.0
@@ -12,14 +12,9 @@ sentencepiece
 einops
 lm-format-enforcer>=0.10.0   # JSON 스키마 강제 디코딩(verify 출력)
 
-# === 영상/이미지 처리 ===
-opencv-python-headless
+# === 이미지 / 온도 처리 ===
 pillow
 numpy
-
-# === RAG (전조 검색: ChromaDB + BAAI/bge-m3) ===
-chromadb>=0.5.0
-sentence-transformers>=3.0.0
 
 # === API 서버 ===
 fastapi
