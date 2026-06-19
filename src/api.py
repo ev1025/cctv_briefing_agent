@@ -57,9 +57,9 @@ def _thermal_features(csv_path):
         arr = np.array([r[:w] for r in rows], dtype=float)
         med = float(np.median(arr))
         hot = float(np.percentile(arr, 99))    # robust 핫스팟(단일 픽셀 max 노이즈 회피)
-        dt, thr = hot - med, config.THERMAL_DANGER_DELTA_C
-        summary = (f"핫스팟(상위1%) {hot:.1f}°C, 장면 중앙값 {med:.1f}°C, 핫스팟이 주변보다 +{dt:.1f}°C 높음. "
-                   f"[판정 기준: 이 핫스팟 ΔT 가 약 +{thr:.0f}°C 이상이면 과열 위험, 그 미만이면 정상 작동 발열]")
+        dt = hot - med
+        # VLM 에 줄 '측정값'만. '위험 기준 초과' 같은 판정 문구는 넣지 않는다(판정은 게이트가 전담).
+        summary = f"핫스팟(상위1%) {hot:.1f}°C, 장면 중앙값 {med:.1f}°C, 핫스팟이 주변보다 +{dt:.1f}°C 높음"
         return {"hot": hot, "med": med, "dt": dt, "summary": summary}
     except Exception as e:
         print(f"[thermal] CSV 파싱 실패: {e}", flush=True)
@@ -104,7 +104,9 @@ def run_verify(thermal_path, rgb_path, csv_path=None):
             "timing": {"vlm_ms": 0, "total_ms": 0},
         }
 
-    # 2차: 게이트 통과(또는 CSV 없음) -> VLM 크로스체크
+    # 2차: 게이트 통과(또는 CSV 없음) -> VLM 크로스체크.
+    #   VLM 에는 온도 '측정값'만 주고 '위험 기준 초과' 같은 판정 문구는 주지 않는다(_thermal_features).
+    #   판정은 게이트가 전담; VLM 이 온도 verdict 에 휩쓸려 DANGER 쏠림/양성강등 약화되는 것 방지.
     temp_summary = tf["summary"] if tf else None
     t0 = time.time()
     v = vlm_analyzer.verify_fire_alarm(thermal_path, rgb_path, temp_summary)
@@ -112,8 +114,9 @@ def run_verify(thermal_path, rgb_path, csv_path=None):
 
     status, source = v.get("status"), "vlm"
     if tf is not None:
-        text = f"{v.get('identified_heat_source', '')} {v.get('reasoning', '')}"
-        benign = any(k in text for k in _BENIGN_KEYWORDS)
+        # 양성 강등은 '식별된 객체' 가 양성 열원일 때만(추론 본문의 stray '햇빛' 언급 등은 무시).
+        heat = v.get("identified_heat_source") or ""
+        benign = any(k in heat for k in _BENIGN_KEYWORDS)
         status, source = ("FALSE_ALARM", "vlm_override(양성열원)") if benign else ("DANGER", "thermal+vlm")
 
     return {
