@@ -32,7 +32,7 @@ def main():
 
     cm = {"DANGER": {"DANGER": 0, "FALSE_ALARM": 0, "OTHER": 0},
           "FALSE_ALARM": {"DANGER": 0, "FALSE_ALARM": 0, "OTHER": 0}}
-    correct, rows = 0, []
+    correct, records = 0, []
     t0 = time.time()
     for m in manifest:
         gt = GT_MAP.get(m["status"])
@@ -43,14 +43,24 @@ def main():
         csv = None if (args.no_csv or not m.get("csv")) else os.path.join(config.SAMPLE_DIR, m["csv"])
         v = run_verify(thermal, rgb, csv)
         pred = v["status"]
-        key = pred if pred in ("DANGER", "FALSE_ALARM") else "OTHER"
-        cm[gt][key] += 1
+        cm[gt][pred if pred in ("DANGER", "FALSE_ALARM") else "OTHER"] += 1
         ok = (pred == gt)
         correct += ok
-        rows.append((m["id"], m["standard"], gt, pred, ok,
-                     f"{v.get('identified_heat_source','')} | src={v.get('decision_source')} dt={v.get('thermal_dt')}"))
+        records.append({"id": m["id"], "standard": m["standard"], "gt": gt, "pred": pred,
+                        "ok": bool(ok), "identified_heat_source": v.get("identified_heat_source"),
+                        "decision_source": v.get("decision_source"), "thermal_dt": v.get("thermal_dt")})
 
-    n = len(rows)
+    n = len(records)
+    setname = os.path.basename(config.SAMPLE_DIR.rstrip("/\\")) or "samples"
+    summary = {
+        "set": setname, "n": n, "correct": correct,
+        "accuracy": round(correct / max(n, 1), 4),
+        "csv": (not args.no_csv),
+        "confusion_matrix": cm,
+        "errors": [r for r in records if not r["ok"]],
+        "results": records,
+    }
+
     lines = []
 
     def emit(s=""):
@@ -58,24 +68,24 @@ def main():
         lines.append(s)
 
     emit(f"=== 평가: {n}프레임 · csv={'off' if args.no_csv else 'on'} · {time.time()-t0:.0f}s ===")
-    emit(f"정확도: {correct}/{n} = {correct/max(n,1)*100:.1f}%")
+    emit(f"정확도: {correct}/{n} = {summary['accuracy']*100:.1f}%")
     emit("혼동행렬 (행=GT, 열=예측):")
     emit(f"  {'GT/Pred':14s} DANGER  FALSE_ALARM  OTHER")
     for gt in ("DANGER", "FALSE_ALARM"):
         emit(f"  {gt:14s} {cm[gt]['DANGER']:6d}  {cm[gt]['FALSE_ALARM']:11d}  {cm[gt]['OTHER']:5d}")
     emit("오답:")
-    for rid, std, gt, pred, ok, heat in rows:
-        if not ok:
-            emit(f"  {gt:11s} -> {pred:11s} [{std}] {rid} (heat={heat})")
+    for r in summary["errors"]:
+        emit(f"  {r['gt']:11s} -> {r['pred']:11s} [{r['standard']}] {r['id']} "
+             f"(heat={r['identified_heat_source']!r} src={r['decision_source']} dt={r['thermal_dt']})")
 
-    # 결과를 outputs/ 에 저장(gitignore). 파일명은 평가셋 이름으로.
+    # outputs/ 에 저장(gitignore): 사람용 .txt + 구조화 .json
     odir = os.path.join(config.PROJECT_DIR, "outputs")
     os.makedirs(odir, exist_ok=True)
-    setname = os.path.basename(config.SAMPLE_DIR.rstrip("/\\")) or "samples"
-    out_path = os.path.join(odir, f"eval_{setname}.txt")
-    with open(out_path, "w", encoding="utf-8") as f:
+    with open(os.path.join(odir, f"eval_{setname}.txt"), "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
-    print(f"[saved] {out_path}")
+    with open(os.path.join(odir, f"eval_{setname}.json"), "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+    print(f"[saved] outputs/eval_{setname}.txt, outputs/eval_{setname}.json")
 
 
 if __name__ == "__main__":
