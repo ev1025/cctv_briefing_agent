@@ -120,6 +120,7 @@ button,input,select{font-family:inherit;}
           <span id="badge" class="badge none">대기</span>
           <div class="vrow"><span class="vlbl">발열체</span><span class="vval" id="heatSrc">-</span></div>
           <div class="vrow"><span class="vlbl">온도</span><span class="vval mono" id="tempSum">-</span></div>
+          <div class="vrow"><span class="vlbl">판정근거</span><span class="vval mono" id="decSrc">-</span></div>
           <div class="reason" id="reason">프레임을 선택하고 [오경보 판정]을 누르세요.</div>
         </div>
       </div>
@@ -190,6 +191,7 @@ async function run(){
     const cls = setBadge(j.status);
     $('heatSrc').textContent = j.identified_heat_source || '-';
     $('tempSum').textContent = j.temp_summary || '(CSV 미입력)';
+    $('decSrc').textContent = (j.decision_source || '-') + (j.thermal_dt != null ? `  (ΔT ${j.thermal_dt}°C, VLM=${j.vlm_status})` : '');
     $('reason').className = 'reason ' + cls;
     $('reason').textContent = j.reasoning || '(없음)';
     const t = j.timing || {};

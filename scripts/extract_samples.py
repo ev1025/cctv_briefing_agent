@@ -24,6 +24,7 @@ def main():
     ap.add_argument("--out", default=config.SAMPLE_DIR)
     ap.add_argument("--normal", type=int, default=3)
     ap.add_argument("--danger", type=int, default=3)
+    ap.add_argument("--skip", type=int, default=0, help="각 status 앞 K개 건너뛰고 추출(held-out 분리용)")
     args = ap.parse_args()
     if not args.data or not os.path.isdir(args.data):
         print("THERMAL_DATA_DIR(또는 --data)로 2.Validation 경로를 지정하세요.")
@@ -63,9 +64,12 @@ def main():
 
         picked = []
         for want, cnt in (("normal", args.normal), ("danger", args.danger)):
-            c = 0
+            c, skipped = 0, 0
             for fr in frames:
                 if fr["status"] != want or not have_all(fr):
+                    continue
+                if skipped < args.skip:        # held-out 분리: 앞 K개 건너뜀
+                    skipped += 1
                     continue
                 picked.append(fr)
                 c += 1
@@ -77,7 +81,13 @@ def main():
                 with open(os.path.join(args.out, fr[k]), "wb") as f:
                     f.write(zsrc.read(member[fr[k]]))
 
-    print(f"추출 완료: {len(picked)}프레임 -> {args.out}")
+    # 평가용 GT manifest 저장(eval_filter 가 읽음)
+    manifest = [{"id": fr["thermal"][:-8], "status": fr["status"], "standard": fr["standard"],
+                 "thermal": fr["thermal"], "rgb": fr["rgb"], "csv": fr["csv"]} for fr in picked]
+    with open(os.path.join(args.out, "manifest.json"), "w", encoding="utf-8") as mf:
+        json.dump(manifest, mf, ensure_ascii=False, indent=2)
+
+    print(f"추출 완료: {len(picked)}프레임 -> {args.out} (manifest.json 포함)")
     for fr in picked:
         print(f"  [{fr['status'] or '?':6s}] {fr['standard']:8s} id={fr['thermal'][:-8]}")
 

@@ -22,6 +22,7 @@ hf_cache/
 
 # 샘플 데이터 (AIHub 514 — 내국인 한정 라이선스, 커밋 금지)
 samples/
+samples_test/
 *.csv
 
 # 환경 변수

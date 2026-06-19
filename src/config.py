@@ -1,12 +1,10 @@
-"""config.py - cctv_briefing_agent 공통 설정 (VLM + RAG 융합 브리핑).
+"""config.py - cctv_briefing_agent 공통 설정 (VLM + RAG 융합 브리핑)
 
-[중요] 이 모듈은 torch/transformers 보다 *먼저* import 되어야 한다.
+  이 모듈은 torch/transformers 보다 *먼저* import 되어야 한다.
   GPU(CUDA_VISIBLE_DEVICES)와 HF 캐시(HF_HOME)는 torch import 순간 고정되므로
   관련 env 세팅이 torch import 보다 앞서야 한다. 그래서 모든 모듈의 첫 import 가 config 다.
   (config 자체는 torch 를 import 하지 않고 dtype 등은 lazy 로 해석한다.)
 
-  cctv_memory/config.py 규약을 따르되, 이 서비스는 '로컬 단일 GPU = 실운영' 이므로
-  GPU 번호를 하드코딩하지 않고 env 로만 받는다(미설정 시 기본 장치 사용).
 """
 import os
 
@@ -83,6 +81,12 @@ LOOKBACK_MIN_HOURS = float(os.environ.get("LOOKBACK_MIN_HOURS", "0"))
 LOOKBACK_MAX_HOURS = float(os.environ.get("LOOKBACK_MAX_HOURS", "24"))
 RAG_TOP_K = int(os.environ.get("RAG_TOP_K", "5"))
 SEARCH_MIN_SCORE = float(os.environ.get("SEARCH_MIN_SCORE", "0.45"))   # cosine 유사도 하한
+
+# === 6b) 온도 판정 보정 ===
+#   핫스팟 ΔT(p99 - 장면 중앙값)가 이 값 이상이면 과열 위험으로 안내(프롬프트에 주입).
+#   주의: 보유 슬라이스(태양광)에서 calib 한 값(normal p99-med ≤7.2 / danger ≥9.2 → 중간 ~8).
+#   설비 종류·사이트마다 재보정 필요. env THERMAL_DANGER_DELTA_C 로 조정.
+THERMAL_DANGER_DELTA_C = float(os.environ.get("THERMAL_DANGER_DELTA_C", "8.0"))
 
 # === 7) 프론트엔드 / 샘플 ===
 FRONTEND_DIR = os.path.join(PROJECT_DIR, "frontend")
