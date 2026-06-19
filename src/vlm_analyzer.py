@@ -97,25 +97,33 @@ def _load_image(path):
     return Image.open(path).convert("RGB")
 
 
+def _norm_status(s):
+    s = str(s).upper()
+    return "DANGER" if "DANGER" in s else ("FALSE_ALARM" if "FALSE" in s else (s or "UNKNOWN"))
+
+
 def _parse_verdict(text):
-    """모델 출력에서 {status, identified_heat_source, reasoning} JSON 을 견고하게 추출."""
-    m = re.search(r"\{.*\}", text.strip(), re.DOTALL)
-    obj = None
+    """{status, identified_heat_source, reasoning} 추출. JSON 이 토큰한계로 잘려도 정규식으로 폴백."""
+    raw = text.strip()
+    m = re.search(r"\{.*\}", raw, re.DOTALL)
     if m:
         try:
             obj = json.loads(m.group(0))
+            if isinstance(obj, dict):
+                return {"status": _norm_status(obj.get("status", "")),
+                        "identified_heat_source": str(obj.get("identified_heat_source", "")),
+                        "reasoning": str(obj.get("reasoning", ""))}
         except Exception:
-            obj = None
-    if not isinstance(obj, dict):
-        return {"status": "UNKNOWN", "identified_heat_source": "",
-                "reasoning": text.strip(), "parse_error": True}
-    status = str(obj.get("status", "")).upper()
-    status = "DANGER" if "DANGER" in status else ("FALSE_ALARM" if "FALSE" in status else (status or "UNKNOWN"))
-    return {
-        "status": status,
-        "identified_heat_source": str(obj.get("identified_heat_source", "")),
-        "reasoning": str(obj.get("reasoning", "")),
-    }
+            pass
+
+    # 폴백: 잘린/깨진 JSON 에서 필드만 정규식 추출(status·heat 는 앞쪽이라 보통 살아있음).
+    def _field(name):
+        mm = re.search(r'"%s"\s*:\s*"((?:[^"\\]|\\.)*)"' % name, raw)
+        return mm.group(1) if mm else ""
+
+    return {"status": _norm_status(_field("status")),
+            "identified_heat_source": _field("identified_heat_source"),
+            "reasoning": _field("reasoning") or raw, "parse_error": True}
 
 
 # ── 공개 API ─────────────────────────────────────────────────────────────────
@@ -135,7 +143,7 @@ def verify_fire_alarm(thermal_image_path, rgb_image_path, temp_summary=None):
 
     user_text = config.VERIFY_USER_PROMPT
     if temp_summary:
-        user_text += f"\n\n[열화상 측정 온도] {temp_summary}"
+        user_text += f"\n\n열화상 측정 온도:\n{temp_summary}"
 
     messages = [
         {"role": "system", "content": config.VERIFY_SYSTEM_PROMPT},
@@ -146,6 +154,8 @@ def verify_fire_alarm(thermal_image_path, rgb_image_path, temp_summary=None):
         ]},
     ]
     text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    prefill = config.VERIFY_PREFILL            # CoT: 응답을 reasoning 부터 시작하게 강제
+    text += prefill
 
     images = [thermal, rgb]
     try:  # qwen-vl-utils 로 비전 입력 추출, 실패 시 PIL 직접 전달
@@ -162,14 +172,16 @@ def verify_fire_alarm(thermal_image_path, rgb_image_path, temp_summary=None):
         in_len = inputs.input_ids.shape[1]
         gen_kwargs = dict(max_new_tokens=config.VLM_MAX_NEW_TOKENS,
                           repetition_penalty=config.VLM_REPETITION_PENALTY, do_sample=False)
-        prefix_fn = _json_prefix_fn(processor)   # lm-format-enforcer 로 JSON 스키마 강제
-        if prefix_fn is not None:
-            gen_kwargs["prefix_allowed_tokens_fn"] = prefix_fn
+        if not prefill:   # prefill 시 enforcer 는 끈다(prompt 내 prefill 과 상태가 어긋남)
+            prefix_fn = _json_prefix_fn(processor)
+            if prefix_fn is not None:
+                gen_kwargs["prefix_allowed_tokens_fn"] = prefix_fn
         with torch.no_grad():
             out = model.generate(**inputs, **gen_kwargs)
-        raw = processor.batch_decode(
+        gen = processor.batch_decode(
             out[:, in_len:], skip_special_tokens=True, clean_up_tokenization_spaces=False)[0].strip()
 
+    raw = prefill + gen   # prefill 을 앞에 붙여 완전한 JSON 복원
     verdict = _parse_verdict(raw)
     verdict["raw"] = raw
     return verdict

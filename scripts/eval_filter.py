@@ -51,16 +51,31 @@ def main():
                      f"{v.get('identified_heat_source','')} | src={v.get('decision_source')} dt={v.get('thermal_dt')}"))
 
     n = len(rows)
-    print(f"\n=== 평가: {n}프레임 · csv={'off' if args.no_csv else 'on'} · {time.time()-t0:.0f}s ===")
-    print(f"정확도: {correct}/{n} = {correct/max(n,1)*100:.1f}%")
-    print("혼동행렬 (행=GT, 열=예측):")
-    print(f"  {'GT/Pred':14s} DANGER  FALSE_ALARM  OTHER")
+    lines = []
+
+    def emit(s=""):
+        print(s)
+        lines.append(s)
+
+    emit(f"=== 평가: {n}프레임 · csv={'off' if args.no_csv else 'on'} · {time.time()-t0:.0f}s ===")
+    emit(f"정확도: {correct}/{n} = {correct/max(n,1)*100:.1f}%")
+    emit("혼동행렬 (행=GT, 열=예측):")
+    emit(f"  {'GT/Pred':14s} DANGER  FALSE_ALARM  OTHER")
     for gt in ("DANGER", "FALSE_ALARM"):
-        print(f"  {gt:14s} {cm[gt]['DANGER']:6d}  {cm[gt]['FALSE_ALARM']:11d}  {cm[gt]['OTHER']:5d}")
-    print("오답:")
+        emit(f"  {gt:14s} {cm[gt]['DANGER']:6d}  {cm[gt]['FALSE_ALARM']:11d}  {cm[gt]['OTHER']:5d}")
+    emit("오답:")
     for rid, std, gt, pred, ok, heat in rows:
         if not ok:
-            print(f"  {gt:11s} -> {pred:11s} [{std}] {rid} (heat={heat})")
+            emit(f"  {gt:11s} -> {pred:11s} [{std}] {rid} (heat={heat})")
+
+    # 결과를 outputs/ 에 저장(gitignore). 파일명은 평가셋 이름으로.
+    odir = os.path.join(config.PROJECT_DIR, "outputs")
+    os.makedirs(odir, exist_ok=True)
+    setname = os.path.basename(config.SAMPLE_DIR.rstrip("/\\")) or "samples"
+    out_path = os.path.join(odir, f"eval_{setname}.txt")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    print(f"[saved] {out_path}")
 
 
 if __name__ == "__main__":

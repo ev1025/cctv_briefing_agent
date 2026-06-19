@@ -8,23 +8,14 @@ POST /api/v1/verify-fire-alarm :
 데모 보조: GET /api/v1/image(이미지 서빙), GET /api/v1/samples(열화상/실화상 페어 목록).
 """
 import os
-import time
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
 
 from . import config
 
 router = APIRouter(prefix="/api/v1", tags=["false-alarm-filter"])
-
-
-class VerifyRequest(BaseModel):
-    camera_id: str
-    thermal_image_path: str                  # 열화상(의사색) 이미지 경로
-    rgb_image_path: str                      # 정합 실화상(RGB) 경로
-    thermal_csv_path: Optional[str] = None   # (선택) 온도행렬 CSV -> 정량 근거 주입
 
 
 @router.get("/health")
@@ -58,8 +49,8 @@ def _thermal_features(csv_path):
         med = float(np.median(arr))
         hot = float(np.percentile(arr, 99))    # robust 핫스팟(단일 픽셀 max 노이즈 회피)
         dt = hot - med
-        # VLM 에 줄 '측정값'만. '위험 기준 초과' 같은 판정 문구는 넣지 않는다(판정은 게이트가 전담).
-        summary = f"핫스팟(상위1%) {hot:.1f}°C, 장면 중앙값 {med:.1f}°C, 핫스팟이 주변보다 +{dt:.1f}°C 높음"
+        # VLM 에 줄 '측정값'만(판정 문구 없음). 소형 모델 위해 특수기호 없이 평문(℃->도).
+        summary = f"핫스팟(상위1%) {hot:.1f}도, 장면 중앙값 {med:.1f}도, 핫스팟이 주변보다 {dt:.1f}도 높음"
         return {"hot": hot, "med": med, "dt": dt, "summary": summary}
     except Exception as e:
         print(f"[thermal] CSV 파싱 실패: {e}", flush=True)
@@ -73,7 +64,8 @@ def _thermal_summary(csv_path):
 
 
 # 온도가 명백히 낮은데도 알람이 뜬 경우/양성 열원 키워드(실화상 식별로 오경보 강등)
-_BENIGN_KEYWORDS = ("사람", "행인", "작업자", "조명", "전등", "햇빛", "햇볕", "햇살", "빛 반사", "반사광", "태양광 반사")
+#   양성 열원 '객체' 키워드. '반사' 계열은 설비 표면 묘사에도 흔히 섞여 오강등을 유발하므로 제외.
+_BENIGN_KEYWORDS = ("사람", "행인", "작업자", "조명", "전등", "햇빛", "햇볕", "햇살")
 
 
 def run_verify(thermal_path, rgb_path, csv_path=None):
@@ -99,7 +91,7 @@ def run_verify(thermal_path, rgb_path, csv_path=None):
             "reasoning": f"핫스팟 ΔT +{tf['dt']:.1f}°C 로 임계(+{thr:.0f}°C) 미만 → 정상 작동 발열(VLM 생략).",
             "temp_summary": tf["summary"],
             "thermal_dt": round(tf["dt"], 1),
-            "decision_source": "thermal_gate(저ΔT·VLM생략)",
+            "decision_source": "thermal_gate(낮은 온도차이·VLM생략)",
             "raw": None,
             "timing": {"vlm_ms": 0, "total_ms": 0},
         }
@@ -133,15 +125,32 @@ def run_verify(thermal_path, rgb_path, csv_path=None):
 
 
 @router.post("/verify-fire-alarm")
-def verify_fire_alarm(req: VerifyRequest):
-    """열화상 + 실화상 + 온도 융합으로 오경보/위험 판정."""
-    if not os.path.isfile(req.thermal_image_path):
-        raise HTTPException(400, f"thermal_image_path 를 찾을 수 없습니다: {req.thermal_image_path}")
-    if not os.path.isfile(req.rgb_image_path):
-        raise HTTPException(400, f"rgb_image_path 를 찾을 수 없습니다: {req.rgb_image_path}")
+def verify_fire_alarm(
+    camera_id: str = Form(...),
+    thermal: UploadFile = File(...),                       # 열화상 이미지 파일
+    rgb: UploadFile = File(...),                           # 정합 실화상(RGB) 파일
+    thermal_csv: Optional[UploadFile] = File(None),        # (선택) 온도 CSV 파일
+):
+    """열화상·실화상(+온도 CSV) 이미지를 업로드(multipart)로 받아 오경보/위험 판정. 임시 저장 후 처리·삭제."""
+    import shutil
+    import tempfile
 
-    res = run_verify(req.thermal_image_path, req.rgb_image_path, req.thermal_csv_path)
-    return {"camera_id": req.camera_id, **res}
+    tmp = tempfile.mkdtemp(prefix="verify_")
+
+    def _save(up, name):
+        p = os.path.join(tmp, name)
+        with open(p, "wb") as f:
+            shutil.copyfileobj(up.file, f)
+        return p
+
+    try:
+        tp = _save(thermal, "thermal.jpg")
+        rp = _save(rgb, "rgb.jpg")
+        cp = _save(thermal_csv, "thermal.csv") if thermal_csv is not None else None
+        res = run_verify(tp, rp, cp)
+        return {"camera_id": camera_id, **res}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ── 프론트 데모 보조 ──────────────────────────────────────────────────────────
