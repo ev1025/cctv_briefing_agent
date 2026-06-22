@@ -1,12 +1,18 @@
 """extract_samples.py - AIHub 514 VS3/VL3 zip 에서 열화상+실화상+CSV 페어 추출.
 
-zip 내부 한글 폴더명은 CP949 라 mojibake 로 보이지만 파일 basename 은 ASCII ID 라
-basename 으로 매칭해 추출한다(원문서 7장 권장 방식). 라벨(VL3)의 status 로 normal/danger 균형 추출.
+AIHub 514 산업시설 열화상 CCTV 데이터(https://aihub.or.kr/aidata/105)에서
+용량이 가장 적은 Validation를 샘플로 라벨링데이터(VL3.zip)와 원천데이터(VS3.zip)
+열화상 이미지, 실화상 이미지, CSV 정보를 하나의 세트(페어)로 묶어서 추출
+
+압축파일이 CP949인코딩 되어있어 폴더명 글자가 깨져보이는 현상(Mojibake) 발생
+-> 실제 파일 이름(basename)은 깨지지 않는 영문과 숫자(ASCII ID)로 되어 있어, 파일 이름으로 매핑
+
 
 실행(프로젝트 루트):
   THERMAL_DATA_DIR="...\\117.산업시설 열화상 CCTV 데이터\\01.데이터\\2.Validation" \
   python -m scripts.extract_samples --normal 3 --danger 3
 """
+
 import argparse
 import json
 import os

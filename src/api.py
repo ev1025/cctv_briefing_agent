@@ -65,7 +65,7 @@ def _thermal_summary(csv_path):
 
 # 온도가 명백히 낮은데도 알람이 뜬 경우/양성 열원 키워드(실화상 식별로 오경보 강등)
 #   양성 열원 '객체' 키워드. '반사' 계열은 설비 표면 묘사에도 흔히 섞여 오강등을 유발하므로 제외.
-_BENIGN_KEYWORDS = ("사람", "행인", "작업자", "조명", "전등", "햇빛", "햇볕", "햇살")
+_BENIGN_KEYWORDS = ("사람", "행인", "작업자", "조명", "전등", "햇빛", "햇볕", "햇살", "차량")
 
 
 def run_verify(thermal_path, rgb_path, csv_path=None):
@@ -91,9 +91,8 @@ def run_verify(thermal_path, rgb_path, csv_path=None):
             "reasoning": f"핫스팟 ΔT +{tf['dt']:.1f}°C 로 임계(+{thr:.0f}°C) 미만 → 정상 작동 발열(VLM 생략).",
             "temp_summary": tf["summary"],
             "thermal_dt": round(tf["dt"], 1),
-            "decision_source": "thermal_gate(낮은 온도차이·VLM생략)",
-            "raw": None,
-            "timing": {"vlm_ms": 0, "total_ms": 0},
+            "decision_source": "온도게이트",   # 게이트가 최종 결정(VLM 미호출). eval 의 gate 분리와 일치
+            "timing": {"vlm_total_ms": 0},
         }
 
     # 2차: 게이트 통과(또는 CSV 없음) -> VLM 크로스체크.
@@ -102,14 +101,15 @@ def run_verify(thermal_path, rgb_path, csv_path=None):
     temp_summary = tf["summary"] if tf else None
     t0 = time.time()
     v = vlm_analyzer.verify_fire_alarm(thermal_path, rgb_path, temp_summary)
-    vlm_ms = round((time.time() - t0) * 1000)
+    vlm_total_ms = round((time.time() - t0) * 1000)
 
-    status, source = v.get("status"), "vlm"
+    # VLM 까지 해석이 온 경우 -> source 는 'VLM'(게이트 통과/CSV 없음 모두). eval 의 vlm 분리와 일치.
+    status, source = v.get("status"), "VLM"
     if tf is not None:
         # 양성 강등은 '식별된 객체' 가 양성 열원일 때만(추론 본문의 stray '햇빛' 언급 등은 무시).
         heat = v.get("identified_heat_source") or ""
         benign = any(k in heat for k in _BENIGN_KEYWORDS)
-        status, source = ("FALSE_ALARM", "vlm_override(양성열원)") if benign else ("DANGER", "thermal+vlm")
+        status = "FALSE_ALARM" if benign else "DANGER"
 
     return {
         "status": status,
@@ -119,8 +119,8 @@ def run_verify(thermal_path, rgb_path, csv_path=None):
         "temp_summary": temp_summary,
         "thermal_dt": round(tf["dt"], 1) if tf else None,
         "decision_source": source,
-        "raw": v.get("raw"),
-        "timing": {"vlm_ms": vlm_ms, "total_ms": vlm_ms},
+        # vlm_total_ms=체인 전체 wall-clock, object/status/reason_ms=단계별(vlm_analyzer 측정)
+        "timing": {"vlm_total_ms": vlm_total_ms, **v.get("timing", {})},
     }
 
 

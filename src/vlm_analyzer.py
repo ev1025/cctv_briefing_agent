@@ -1,24 +1,21 @@
 """vlm_analyzer.py - 멀티모달 오경보 필터 (열화상 + 실화상 크로스체크).
 
-Qwen3-VL-2B 로 열화상 1장 + 정합 실화상(RGB) 1장을 동시에 보고,
-열화상 핫스팟의 정체를 실화상에서 식별해 오경보(FALSE_ALARM) / 위험(DANGER)을 판정한다.
-출력은 JSON {status, identified_heat_source, reasoning} (lm-format-enforcer 로 스키마 강제).
+Qwen3-VL-2B 로 열화상 1장 + 정합 실화상(RGB) 1장을 보고, 체인 룰로 3단계 추론:
+  1) 핫스팟 객체 식별  2) 위험/정상 판정  3) 판단 근거.
+2B 모델엔 JSON 다필드 강제(긴 출력 -> 루프/잘림)보다 '한 번에 하나씩 묻는' 체인이 빠르고 정확.
 
   - 모델/프로세서는 모듈 싱글톤(1회 로드), GPU 는 Lock 으로 직렬 사용.
   - 이미지 2장은 qwen-vl-utils(process_vision_info) 로 추출, 실패 시 PIL 직접 전달 폴백.
 
-CLI 스모크: python -m src.vlm_analyzer <thermal.jpg> <rgb.jpg> [thermal.csv]
+CLI 스모크: python -m src.vlm_analyzer <thermal.jpg> <rgb.jpg>
 """
 import json
-import re
 import threading
 
 from . import config  # noqa: F401  (env-before-torch: 최상단)
 
 _MODEL = None
 _PROCESSOR = None
-_JSON_FN = None               # lm-format-enforcer prefix_allowed_tokens_fn 캐시
-_JSON_FN_BUILT = False
 _LOAD_LOCK = threading.Lock()  # 모델 로드 직렬화
 _GEN_LOCK = threading.Lock()   # GPU 추론 직렬화
 
@@ -61,37 +58,7 @@ def _load_model():
         return _PROCESSOR, _MODEL
 
 
-# ── JSON 출력 강제 (lm-format-enforcer, 1회 빌드 후 캐시) ──────────────────────
-def _json_prefix_fn(processor):
-    """디코딩을 VERIFY_JSON_SCHEMA 에 묶는 prefix_allowed_tokens_fn. 미설치/비활성 시 None."""
-    global _JSON_FN, _JSON_FN_BUILT
-    if _JSON_FN_BUILT:
-        return _JSON_FN
-    _JSON_FN_BUILT = True
-    if not config.VLM_ENFORCE_JSON:
-        _JSON_FN = None
-        return None
-    try:
-        # transformers 5.x 에서 PreTrainedTokenizerBase 위치가 바뀌어 lm-format-enforcer
-        #   integration import 가 깨진다(타입힌트용) -> tokenization_utils 에 심볼 주입(shim).
-        import transformers
-        import transformers.tokenization_utils as _tu
-        if not hasattr(_tu, "PreTrainedTokenizerBase"):
-            _tu.PreTrainedTokenizerBase = transformers.PreTrainedTokenizerBase
-        from lmformatenforcer import JsonSchemaParser
-        from lmformatenforcer.integrations.transformers import (
-            build_transformers_prefix_allowed_tokens_fn)
-        tok = getattr(processor, "tokenizer", None) or processor
-        _JSON_FN = build_transformers_prefix_allowed_tokens_fn(
-            tok, JsonSchemaParser(config.VERIFY_JSON_SCHEMA))
-        print("[VLM] JSON 출력 강제 ON (lm-format-enforcer)", flush=True)
-    except Exception as e:
-        print(f"[VLM] JSON 강제 비활성 -> 정규식 폴백: {e}", flush=True)
-        _JSON_FN = None
-    return _JSON_FN
-
-
-# ── 입력/출력 유틸 ────────────────────────────────────────────────────────────
+# ── 유틸 ─────────────────────────────────────────────────────────────────────
 def _load_image(path):
     from PIL import Image
     return Image.open(path).convert("RGB")
@@ -99,101 +66,97 @@ def _load_image(path):
 
 def _norm_status(s):
     s = str(s).upper()
-    return "DANGER" if "DANGER" in s else ("FALSE_ALARM" if "FALSE" in s else (s or "UNKNOWN"))
+    return "DANGER" if "DANGER" in s else ("FALSE_ALARM" if "FALSE" in s else "UNKNOWN")
 
 
-def _parse_verdict(text):
-    """{status, identified_heat_source, reasoning} 추출. JSON 이 토큰한계로 잘려도 정규식으로 폴백."""
-    raw = text.strip()
-    m = re.search(r"\{.*\}", raw, re.DOTALL)
-    if m:
-        try:
-            obj = json.loads(m.group(0))
-            if isinstance(obj, dict):
-                return {"status": _norm_status(obj.get("status", "")),
-                        "identified_heat_source": str(obj.get("identified_heat_source", "")),
-                        "reasoning": str(obj.get("reasoning", ""))}
-        except Exception:
-            pass
+def _extract_object(text, choices):
+    """객관식 출력에서 후보 단어 매칭. 출력에 후보가 보이면 그 단어로, 없으면 '기타'.
 
-    # 폴백: 잘린/깨진 JSON 에서 필드만 정규식 추출(status·heat 는 앞쪽이라 보통 살아있음).
-    def _field(name):
-        mm = re.search(r'"%s"\s*:\s*"((?:[^"\\]|\\.)*)"' % name, raw)
-        return mm.group(1) if mm else ""
-
-    return {"status": _norm_status(_field("status")),
-            "identified_heat_source": _field("identified_heat_source"),
-            "reasoning": _field("reasoning") or raw, "parse_error": True}
-
-
-# ── 공개 API ─────────────────────────────────────────────────────────────────
-def verify_fire_alarm(thermal_image_path, rgb_image_path, temp_summary=None):
-    """열화상 + 실화상 크로스체크 -> {status, identified_heat_source, reasoning, raw}.
-
-    Args:
-        thermal_image_path: 열화상(의사색) 이미지 경로.
-        rgb_image_path: 같은 시각·위치의 정합 실화상(RGB) 경로.
-        temp_summary: (선택) 온도 CSV 요약 텍스트(핫스팟 °C·ΔT). 정량 근거로 주입.
+    공백 무시 부분일치(평서문으로 풀어써도 후보 단어만 들어있으면 추출). 긴 후보 우선(부분 겹침 방지).
     """
+    if not text:
+        return "기타"
+    t = text.replace(" ", "")
+    for c in sorted(choices, key=len, reverse=True):
+        if c.replace(" ", "") in t:
+            return c
+    return "기타"
+
+
+def _ask(processor, model, user_text, images, max_new_tokens):
+    """이미지 2장 + 한 가지 질문 -> 답변 텍스트(JSON 강제 없음). 체인 1스텝."""
     import torch
-
-    processor, model = _load_model()
-    thermal = _load_image(thermal_image_path)
-    rgb = _load_image(rgb_image_path)
-
-    user_text = config.VERIFY_USER_PROMPT
-    if temp_summary:
-        user_text += f"\n\n열화상 측정 온도:\n{temp_summary}"
 
     messages = [
         {"role": "system", "content": config.VERIFY_SYSTEM_PROMPT},
         {"role": "user", "content": [
-            {"type": "image", "image": thermal},
-            {"type": "image", "image": rgb},
+            {"type": "image", "image": images[0]},
+            {"type": "image", "image": images[1]},
             {"type": "text", "text": user_text},
         ]},
     ]
     text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    prefill = config.VERIFY_PREFILL            # CoT: 응답을 reasoning 부터 시작하게 강제
-    text += prefill
-
-    images = [thermal, rgb]
+    vis = images
     try:  # qwen-vl-utils 로 비전 입력 추출, 실패 시 PIL 직접 전달
         from qwen_vl_utils import process_vision_info
-        imgs, _ = process_vision_info(messages)
-        if imgs:
-            images = imgs
+        pi, _ = process_vision_info(messages)
+        if pi:
+            vis = pi
     except Exception:
         pass
 
-    with _GEN_LOCK:  # GPU 직렬 사용
-        inputs = processor(text=[text], images=images,
-                           padding=True, return_tensors="pt").to(model.device)
-        in_len = inputs.input_ids.shape[1]
-        gen_kwargs = dict(max_new_tokens=config.VLM_MAX_NEW_TOKENS,
-                          repetition_penalty=config.VLM_REPETITION_PENALTY, do_sample=False)
-        if not prefill:   # prefill 시 enforcer 는 끈다(prompt 내 prefill 과 상태가 어긋남)
-            prefix_fn = _json_prefix_fn(processor)
-            if prefix_fn is not None:
-                gen_kwargs["prefix_allowed_tokens_fn"] = prefix_fn
-        with torch.no_grad():
-            out = model.generate(**inputs, **gen_kwargs)
-        gen = processor.batch_decode(
-            out[:, in_len:], skip_special_tokens=True, clean_up_tokenization_spaces=False)[0].strip()
+    inputs = processor(text=[text], images=vis, padding=True, return_tensors="pt").to(model.device)
+    in_len = inputs.input_ids.shape[1]
+    with torch.no_grad():
+        out = model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False,
+                             repetition_penalty=config.VLM_REPETITION_PENALTY)
+    return processor.batch_decode(
+        out[:, in_len:], skip_special_tokens=True, clean_up_tokenization_spaces=False)[0].strip()
 
-    raw = prefill + gen   # prefill 을 앞에 붙여 완전한 JSON 복원
-    verdict = _parse_verdict(raw)
-    verdict["raw"] = raw
-    return verdict
+
+# ── 공개 API ─────────────────────────────────────────────────────────────────
+def verify_fire_alarm(thermal_image_path, rgb_image_path, temp_summary=None):
+    """체인 룰(객체 식별 -> 위험 판정 -> 근거) -> {status, identified_heat_source, reasoning, timing}.
+
+    timing: 체인 3단계별 소요(ms) {object_ms, status_ms, reason_ms}.
+    temp_summary 는 받지만 VLM 엔 주지 않는다(온도는 게이트 전담, VLM 은 순수 시각 판단).
+    """
+    import time
+
+    processor, model = _load_model()
+    images = [_load_image(thermal_image_path), _load_image(rgb_image_path)]
+
+    with _GEN_LOCK:  # 체인 3콜을 한 번에 GPU 점유
+        # 1) 핫스팟 객체 식별 (후보 목록 객관식 -> 코드가 후보 매칭)
+        t0 = time.time()
+        obj = _extract_object(_ask(processor, model, config.VERIFY_OBJECT_PROMPT, images, max_new_tokens=24),
+                              config.VERIFY_OBJECT_CHOICES)
+        t1 = time.time()
+        # 2) 위험/정상 판정 (1단계 객체를 맥락으로, 한 단어)
+        st_raw = _ask(processor, model, config.VERIFY_STATUS_PROMPT.format(object=obj),
+                      images, max_new_tokens=12)
+        status = _norm_status(st_raw)
+        t2 = time.time()
+        # 3) 판단 근거 (객체+판정을 맥락으로, 한 문장)
+        reason = _ask(processor, model, config.VERIFY_REASON_PROMPT.format(object=obj, status=status),
+                      images, max_new_tokens=80)
+        t3 = time.time()
+
+    return {
+        "status": status,
+        "identified_heat_source": obj,
+        "reasoning": reason,
+        "timing": {  # 체인 단계별 소요(ms)
+            "object_ms": round((t1 - t0) * 1000),
+            "status_ms": round((t2 - t1) * 1000),
+            "reason_ms": round((t3 - t2) * 1000),
+        },
+    }
 
 
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 3:
-        print("usage: python -m src.vlm_analyzer <thermal.jpg> <rgb.jpg> [thermal.csv]")
+        print("usage: python -m src.vlm_analyzer <thermal.jpg> <rgb.jpg>")
         raise SystemExit(1)
-    ts = None
-    if len(sys.argv) > 3:
-        from .api import _thermal_summary
-        ts = _thermal_summary(sys.argv[3])
-    print(json.dumps(verify_fire_alarm(sys.argv[1], sys.argv[2], ts), ensure_ascii=False, indent=2))
+    print(json.dumps(verify_fire_alarm(sys.argv[1], sys.argv[2]), ensure_ascii=False, indent=2))

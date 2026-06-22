@@ -11,6 +11,9 @@ outputs/
 hf_cache/
 *.log
 
+# 개인 업무 보고서 로그 (YYYY-MM-DD 업무보고서.md, 노션 붙여넣기용, 레포에 미커밋)
+docs/*업무보고서*.md
+
 # 모델 / 영상 데이터 (대용량)
 *.mp4
 *.avi

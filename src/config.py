@@ -63,29 +63,30 @@ def build_quant_config():
 #   설비 종류·사이트마다 재보정 필요. env THERMAL_DANGER_DELTA_C 로 조정.
 THERMAL_DANGER_DELTA_C = float(os.environ.get("THERMAL_DANGER_DELTA_C", "8.0"))
 
-# === 6) 프롬프트 / JSON 강제 ===
-#   소형(2B) 모델: 특수기호 없이 평문 + 짧은 reasoning(길면 토큰 한계로 JSON 이 안 닫혀 필드 유실).
-#   객체 앵커링 방지: 예시 명사 없이 '보이는 그대로'. JSON 은 lm-format-enforcer 로 강제(키 순서는 강제 안 됨).
+# === 6) 프롬프트 (체인 룰: 객체식별 -> 위험판정 -> 근거, 각각 별도 호출) ===
+#   2B 모델엔 JSON 다필드 강제(긴 출력 -> 루프/잘림)보다 '한 번에 하나씩' 묻는 체인이 빠르고 정확.
+#   공용 시스템 프롬프트는 '셋업'만, 각 단계 질문은 USER 에서 한 가지만 묻는다.
 VERIFY_SYSTEM_PROMPT = (
     "너는 산업 현장의 화재 조기경보를 판정하는 AI 관제사다. "
-    "1번 이미지는 열화상(뜨거울수록 밝거나 붉음), 2번은 같은 위치의 실화상(RGB)이다. "
-    "열화상에서 가장 뜨거운 핫스팟의 위치를 실화상에서 찾아 그 객체를 식별하라. "
-    "사람, 조명, 차량 등 화재와 무관한 일상 물체나 정상 가동 중인 설비의 표면 발열이면 FALSE_ALARM, "
-    "비정상적으로 과열된 설비나 화재 징후면 DANGER 로 판정한다. "
-    "객체는 특정 단어를 지레짐작하지 말고 실화상에 보이는 그대로 적고, 명확하지 않으면 미상으로 적는다. "
-    "reasoning 은 한 문장으로 짧게 쓴다."
+    "1번 이미지는 열화상(뜨거울수록 밝거나 붉음), 2번은 같은 위치의 실화상(RGB)이다."
 )
-VERIFY_USER_PROMPT = "위 두 이미지를 판정하라."
-#   assistant prefill(CoT 강제용)은 enforcer 와 양립 불가라 기본 비움 -> enforcer 사용(유효 JSON).
-VERIFY_PREFILL = os.environ.get("VERIFY_PREFILL", "")
-VLM_ENFORCE_JSON = os.environ.get("VLM_ENFORCE_JSON", "1") == "1"
-#   status 를 먼저 둔다: reasoning 이 길어 잘려도 status·identified_heat_source 는 살아남게(정규식 폴백).
-VERIFY_JSON_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "status": {"type": "string", "enum": ["FALSE_ALARM", "DANGER"]},
-        "identified_heat_source": {"type": "string"},
-        "reasoning": {"type": "string"},
-    },
-    "required": ["status", "identified_heat_source", "reasoning"],
-}
+#   1단계 — 핫스팟 객체 식별. 2B 가 평서문으로 풀어쓰는 걸 막으려고 '후보 목록 객관식'(구분자 없이 평문).
+#   sLLM 은 <> [] 같은 특수 구분자를 잘 못 따르므로, 후보 단어를 주고 하나만 고르게 한다(코드가 매칭).
+VERIFY_OBJECT_CHOICES = (
+    "태양광 패널", "배전반", "변압기", "전동기", "배관", "케이블", "사람", "조명", "차량", "햇빛", "기타",
+)
+VERIFY_OBJECT_PROMPT = (
+    "열화상에서 가장 뜨거운 지점이 실화상에서 무슨 물체인지, 아래 목록 중 가장 가까운 것 하나만 그 단어 그대로 답하라.\n"
+    + " / ".join(VERIFY_OBJECT_CHOICES)
+    + "\n목록에 없으면 기타. 설명·문장 없이 단어만."
+)
+#   2단계 — 위험/정상 판정 (1단계 객체를 맥락으로). 한 단어만.
+VERIFY_STATUS_PROMPT = (
+    "핫스팟의 객체는 '{object}' 이다. "
+    "사람·조명·차량·햇빛 등 화재와 무관한 열원이거나 정상 가동 중 발열이면 FALSE_ALARM, "
+    "비정상적으로 과열된 설비나 화재 징후면 DANGER. FALSE_ALARM 또는 DANGER 한 단어만 답하라."
+)
+#   3단계 — 판단 근거 (객체+판정을 맥락으로). 한 문장만.
+VERIFY_REASON_PROMPT = (
+    "핫스팟 객체는 '{object}', 판정은 '{status}' 다. 그렇게 판단한 근거를 한 문장으로만 답하라."
+)
