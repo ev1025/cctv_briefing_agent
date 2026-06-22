@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ThermalGuard · 화재경보 관제</title>
+<link rel="stylesheet" as="style" crossorigin
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@latest/dist/web/static/pretendard.min.css" />
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/htm@3/dist/htm.umd.js"></script>
+<style>
+  :root{
+    --bg:#0a0c11; --s1:#0f1218; --s2:#141821; --s3:#1b2029;
+    --line:#20242e; --line2:#2b313d;
+    --tx:#e7e9ee; --tx2:#a4abb8; --mut:#6e7682;
+    --danger:#f25a5a; --danger-bg:rgba(242,90,90,.12); --danger-bd:rgba(242,90,90,.4);
+    --safe:#34d399; --safe-bg:rgba(52,211,153,.11); --safe-bd:rgba(52,211,153,.35);
+    --warn:#fbbf24; --warn-bg:rgba(251,191,36,.12);
+    --acc:#6d77f5; --acc-bg:rgba(109,119,245,.14);
+    --sh:0 2px 8px rgba(0,0,0,.32),0 1px 2px rgba(0,0,0,.4);
+    --r:12px;
+    --font:"Pretendard","Pretendard Variable",-apple-system,"Segoe UI","Malgun Gothic",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--tx);font-family:var(--font);
+    -webkit-font-smoothing:antialiased;font-size:14px;letter-spacing:-.01em}
+  :focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:6px}
+  .num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:var(--line2);border-radius:6px;border:3px solid transparent;background-clip:content-box}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition-duration:.01ms!important}}
+
+  /* Header */
+  .hdr{height:56px;display:flex;align-items:center;gap:14px;padding:0 20px;
+    background:linear-gradient(180deg,#11141b,#0e1117);border-bottom:1px solid var(--line)}
+  .brand{display:flex;align-items:center;gap:11px}
+  .mark{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;color:#fff;
+    background:linear-gradient(140deg,#ff7a45,#f0413f);box-shadow:0 2px 10px rgba(240,65,63,.35)}
+  .brand .t{font-size:15px;font-weight:700;letter-spacing:-.02em}
+  .brand .s{font-size:11px;color:var(--mut);margin-top:1px}
+  .sp{flex:1}
+  .live{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--tx2);
+    background:var(--s2);border:1px solid var(--line);padding:5px 11px;border-radius:20px}
+  .live .d{width:7px;height:7px;border-radius:50%;background:var(--safe);box-shadow:0 0 0 0 rgba(52,211,153,.5);animation:live 2s infinite}
+  @keyframes live{0%{box-shadow:0 0 0 0 rgba(52,211,153,.45)}70%{box-shadow:0 0 0 6px rgba(52,211,153,0)}100%{box-shadow:0 0 0 0 rgba(52,211,153,0)}}
+  .iconbtn{position:relative;width:38px;height:38px;border-radius:10px;display:grid;place-items:center;
+    color:var(--tx2);cursor:pointer;transition:background .15s,color .15s}
+  .iconbtn:hover{background:var(--s3);color:var(--tx)}
+  .iconbtn .badge{position:absolute;top:3px;right:3px;min-width:17px;height:17px;line-height:17px;
+    background:var(--danger);color:#fff;font-size:10px;font-weight:700;border-radius:9px;text-align:center;padding:0 4px;border:2px solid var(--s1)}
+
+  /* Layout */
+  .wrap{display:flex;height:calc(100vh - 56px)}
+  .side{width:332px;flex:none;border-right:1px solid var(--line);background:var(--s1);display:flex;flex-direction:column}
+  .side-h{padding:16px 18px 10px;display:flex;align-items:center;justify-content:space-between}
+  .side-h .ti{font-size:12px;font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
+  .chip{font-size:11px;font-weight:700;color:var(--tx2);background:var(--s3);border-radius:20px;padding:2px 9px}
+  .feed{overflow:auto;padding:4px 12px 16px;display:flex;flex-direction:column;gap:8px}
+  .wait{color:var(--mut);font-size:13px;padding:18px 8px;text-align:center;line-height:1.6}
+
+  /* Alert card */
+  .card{position:relative;background:var(--s2);border:1px solid var(--line);border-radius:var(--r);
+    padding:13px 14px 13px 16px;cursor:pointer;overflow:hidden;transition:border-color .15s,background .15s,transform .12s}
+  .card:hover{border-color:var(--line2);background:var(--s3)}
+  .card:active{transform:scale(.992)}
+  .card.sel{border-color:var(--acc);background:linear-gradient(180deg,rgba(109,119,245,.07),transparent)}
+  .card .bar{position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:0 3px 3px 0}
+  .card .row1{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .card .cam{display:flex;align-items:center;gap:7px;font-size:14px;font-weight:700;letter-spacing:-.01em}
+  .card .cam svg{color:var(--mut)}
+  .card .meta{color:var(--mut);font-size:12px;margin-top:5px}
+  .card.done{opacity:.62}
+
+  /* Status pill */
+  .pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;
+    padding:3px 9px;border-radius:20px;border:1px solid transparent;white-space:nowrap}
+  .pill.d{color:var(--danger);background:var(--danger-bg);border-color:var(--danger-bd)}
+  .pill.s{color:var(--safe);background:var(--safe-bg);border-color:var(--safe-bd)}
+  .pill.w{color:var(--warn);background:var(--warn-bg)}
+  .pill.m{color:var(--mut);background:var(--s3);border-color:var(--line)}
+  .pill.lg{font-size:13px;padding:5px 12px}
+
+  /* Main */
+  .main{flex:1;overflow:auto}
+  .empty{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--mut)}
+  .empty .ic{width:54px;height:54px;border-radius:14px;display:grid;place-items:center;background:var(--s2);border:1px solid var(--line);color:var(--line2)}
+  .detail{max-width:1000px;margin:0 auto;padding:24px 28px 40px}
+  .crumb{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+  .crumb h2{font-size:19px;font-weight:700;margin:0;letter-spacing:-.02em}
+  .crumb .when{color:var(--mut);font-size:13px;margin-bottom:18px}
+
+  .xcheck{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .imgcard{background:var(--s2);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:var(--sh)}
+  .imgcard .ih{display:flex;align-items:center;justify-content:space-between;padding:10px 13px;border-bottom:1px solid var(--line)}
+  .imgcard .ih .l{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--tx2)}
+  .imgcard .ih .l svg{color:var(--mut)}
+  .imgbox{position:relative;background:#000;cursor:crosshair;aspect-ratio:5/4;overflow:hidden}
+  .imgbox img{width:100%;height:100%;object-fit:cover;display:block}
+  .ch{position:absolute;background:rgba(255,90,90,.9);pointer-events:none;box-shadow:0 0 4px rgba(255,90,90,.6)}
+  .ch.v{width:1px;top:0;bottom:0}.ch.h{height:1px;left:0;right:0}
+  .ch-dot{position:absolute;width:8px;height:8px;margin:-4px 0 0 -4px;border:1.5px solid #fff;border-radius:50%;background:rgba(255,90,90,.5);pointer-events:none}
+
+  .metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:14px}
+  .metric{background:var(--s2);border:1px solid var(--line);border-radius:var(--r);padding:15px 16px;box-shadow:var(--sh)}
+  .metric .mh{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--mut);font-weight:500}
+  .metric .mh svg{color:var(--mut)}
+  .metric .mv{font-size:30px;font-weight:800;margin-top:9px;letter-spacing:-.03em;line-height:1}
+  .metric .mv.d{color:var(--danger)} .metric .mv.s{color:var(--safe)}
+  .metric .mv .u{font-size:15px;font-weight:600;color:var(--tx2);margin-left:2px}
+  .metric .mv.txt{font-size:19px;font-weight:700;color:var(--tx)}
+  .metric .ms{font-size:11.5px;color:var(--mut);margin-top:7px}
+
+  .brief{background:var(--s2);border:1px solid var(--line);border-radius:var(--r);padding:18px;margin-top:14px;box-shadow:var(--sh)}
+  .brief .bh{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:600;color:var(--tx2);margin-bottom:11px}
+  .brief .bh .ai{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;background:var(--acc-bg);color:var(--acc2,#9aa2ff)}
+  .brief .rep{font-size:14.5px;line-height:1.75;color:#cfd5e0}
+  .brief .skel{height:14px;border-radius:6px;background:linear-gradient(90deg,var(--s3),#222836,var(--s3));background-size:200% 100%;animation:shim 1.3s infinite}
+  .brief .skel+.skel{margin-top:9px;width:82%}
+  @keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+  .act{margin-top:18px;background:var(--s2);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;box-shadow:var(--sh)}
+  .act .q{font-size:13px;color:var(--mut);margin-bottom:13px}
+  .btns{display:flex;gap:12px}
+  .btn{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;font:inherit;font-weight:700;font-size:15px;
+    cursor:pointer;border-radius:11px;padding:14px;border:1px solid;transition:background .15s,transform .1s,box-shadow .15s}
+  .btn:active{transform:scale(.985)}
+  .btn.d{color:#fff;background:var(--danger);border-color:var(--danger)}
+  .btn.d:hover{background:#e74a4a;box-shadow:0 4px 16px rgba(242,90,90,.3)}
+  .btn.s{color:var(--safe);background:var(--safe-bg);border-color:var(--safe-bd)}
+  .btn.s:hover{background:rgba(52,211,153,.2)}
+  .done-bar{display:flex;align-items:center;gap:11px;padding:14px 16px;border-radius:11px;font-size:14.5px;font-weight:700}
+  .done-bar.confirm{background:var(--danger-bg);color:var(--danger);border:1px solid var(--danger-bd)}
+  .done-bar.reject{background:var(--safe-bg);color:var(--safe);border:1px solid var(--safe-bd)}
+  .done-bar .n{font-weight:500;color:var(--mut);font-size:12.5px;margin-left:auto}
+  .spin{animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const html = htm.bind(React.createElement);
+const { useState, useEffect, useRef } = React;
+const API = "/api/v1";
+const imgUrl = (p) => `${API}/image?path=${encodeURIComponent(p)}`;
+const pad = (n) => String(n).padStart(2, "0");
+
+const ICONS = {
+  flame:'<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>',
+  bell:'<path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/>',
+  cam:'<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>',
+  alert:'<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  shield:'<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+  thermo:'<path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"/>',
+  cpu:'<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>',
+  box:'<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
+  route:'<circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/>',
+  check:'<path d="M20 6 9 17l-5-5"/>',
+  x:'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  loader:'<path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/>',
+  inbox:'<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+};
+function Icon({ name, size = 18, cls = "" }) {
+  return html`<svg className=${cls} width=${size} height=${size} viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
+    dangerouslySetInnerHTML=${{ __html: ICONS[name] || "" }} />`;
+}
+
+const isDanger = (s) => s === "DANGER";
+function StatusPill({ status, lg }) {
+  if (!status) return null;
+  const d = isDanger(status);
+  return html`<span className=${"pill " + (d ? "d" : "s") + (lg ? " lg" : "")}>
+    <${Icon} name=${d ? "alert" : "shield"} size=${lg ? 14 : 12} />${d ? "위험 의심" : "정상 추정"}</span>`;
+}
+
+async function analyze(a) {
+  const fd = new FormData();
+  fd.append("camera_id", a.camera);
+  const grab = async (path, field, fname) => {
+    const b = await (await fetch(imgUrl(path))).blob();
+    fd.append(field, b, fname);
+  };
+  await grab(a.thermal, "thermal", "thermal.jpg");
+  await grab(a.rgb, "rgb", "rgb.jpg");
+  if (a.csv) await grab(a.csv, "thermal_csv", "thermal.csv");
+  const r = await fetch(`${API}/verify-fire-alarm`, { method: "POST", body: fd });
+  if (!r.ok) throw new Error("분석 실패 " + r.status);
+  return await r.json();
+}
+
+// 교차검증 뷰: 두 이미지 + hover 시 동일 상대좌표 크로스헤어
+function CrossCheck({ alert }) {
+  const [c, setC] = useState(null);
+  const onMove = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setC({ x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height });
+  };
+  const overlay = () => c && html`
+    <div className="ch v" style=${{ left: c.x * 100 + "%" }} />
+    <div className="ch h" style=${{ top: c.y * 100 + "%" }} />
+    <div className="ch-dot" style=${{ left: c.x * 100 + "%", top: c.y * 100 + "%" }} />`;
+  const card = (icon, label, src) => html`
+    <div className="imgcard">
+      <div className="ih"><div className="l"><${Icon} name=${icon} size=${15} />${label}</div></div>
+      <div className="imgbox" onMouseMove=${onMove} onMouseLeave=${() => setC(null)}>
+        <img src=${src} alt=${label} />${overlay()}
+      </div>
+    </div>`;
+  return html`<div className="xcheck">
+    ${card("thermo", "열화상 (의사색)", imgUrl(alert.thermal))}
+    ${card("cam", "실화상 (정합 RGB)", imgUrl(alert.rgb))}
+  </div>`;
+}
+
+function Detail({ alert, cur, onDecide }) {
+  if (!alert) return html`<div className="empty">
+    <div className="ic"><${Icon} name="inbox" size=${26} /></div>
+    <div>왼쪽 목록에서 화재 경보를 선택하세요.</div></div>`;
+  const a = cur.analysis;
+  const dt = a && a.thermal_dt;
+  return html`<div className="detail">
+    <div className="crumb">
+      <h2>${alert.camera} · 화재 경보</h2>
+      ${a && html`<${StatusPill} status=${a.status} lg=${true} />`}
+    </div>
+    <div className="when num">${alert.time} · 프레임 ${alert.id}</div>
+
+    <${CrossCheck} alert=${alert} />
+
+    ${cur.loading && !a && html`<div className="brief">
+      <div className="bh"><span className="ai"><${Icon} name="loader" size=${15} cls="spin" /></span>AI 분석 중…</div>
+      <div className="skel" /><div className="skel" /></div>`}
+    ${cur.error && html`<div className="brief" style=${{ color: "var(--danger)" }}>분석 오류: ${cur.error}</div>`}
+
+    ${a && html`
+      <div className="metrics">
+        <div className="metric">
+          <div className="mh"><${Icon} name="thermo" size=${15} />핫스팟 온도차</div>
+          <div className=${"mv num " + (isDanger(a.status) ? "d" : "s")}>${dt != null ? (dt > 0 ? "+" : "") + dt : "-"}<span className="u">°C</span></div>
+          <div className="ms">정상보다 높은 표면 온도차</div>
+        </div>
+        <div className="metric">
+          <div className="mh"><${Icon} name="box" size=${15} />식별 설비</div>
+          <div className="mv txt">${a.identified_heat_source ?? "-"}</div>
+          <div className="ms">AI 영상 식별</div>
+        </div>
+        <div className="metric">
+          <div className="mh"><${Icon} name="route" size=${15} />판정 경로</div>
+          <div className="mv txt">${a.decision_source ?? "-"}</div>
+          <div className="ms">VLM 단독판정 ${a.vlm_status ?? "미호출"}</div>
+        </div>
+      </div>
+
+      <div className="brief">
+        <div className="bh"><span className="ai"><${Icon} name="cpu" size=${15} /></span>AI 분석 보고서</div>
+        <div className="rep">${a.reasoning || "근거 없음"}</div>
+      </div>
+
+      <div className="act">
+        ${!alert.decision ? html`
+          <div className="q">두 화면과 분석 보고서를 교차 검토한 뒤 최종 판단하세요.</div>
+          <div className="btns">
+            <button className="btn d" onClick=${() => onDecide(alert, "confirm")}><${Icon} name="alert" size=${18} />실제 화재 / 위험</button>
+            <button className="btn s" onClick=${() => onDecide(alert, "reject")}><${Icon} name="shield" size=${18} />단순 오알람 (무시)</button>
+          </div>` : html`
+          <div className=${"done-bar " + alert.decision}>
+            <${Icon} name=${alert.decision === "confirm" ? "alert" : "check"} size=${18} />
+            ${alert.decision === "confirm" ? "실제 위험으로 확정" : "오알람으로 종결"}
+            <span className="n">${(alert.decision === "confirm") === isDanger(a.status) ? "시스템 판정과 일치" : "시스템과 상이 · 작업자 판단 우선(학습데이터로 기록)"}</span>
+          </div>`}
+      </div>`}
+  </div>`;
+}
+
+function AlertCard({ a, sel, an, onClick }) {
+  const status = an && an.status;
+  const color = a.decision ? "var(--mut)" : status ? (isDanger(status) ? "var(--danger)" : "var(--safe)") : "var(--warn)";
+  return html`<div role="button" tabIndex=${0} aria-label=${`${a.camera} 화재 경보 ${a.time}`}
+       className=${"card" + (sel ? " sel" : "") + (a.decision ? " done" : "")}
+       onClick=${onClick} onKeyDown=${(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } }}>
+    <div className="bar" style=${{ background: color }} />
+    <div className="row1">
+      <div className="cam"><${Icon} name="cam" size=${15} />${a.camera}</div>
+      ${a.decision
+        ? html`<span className=${"pill " + (a.decision === "confirm" ? "d" : "s")}><${Icon} name=${a.decision === "confirm" ? "alert" : "check"} size=${12} />${a.decision === "confirm" ? "위험 확정" : "오알람 종결"}</span>`
+        : an && an.loading ? html`<span className="pill m"><${Icon} name="loader" size=${12} cls="spin" />분석 중</span>`
+        : html`<${StatusPill} status=${status} />`}
+    </div>
+    <div className="meta num">화재 경보 · ${a.time} · ${a.id}</div>
+  </div>`;
+}
+
+function App() {
+  const [alerts, setAlerts] = useState([]);
+  const [selId, setSelId] = useState(null);
+  const [cache, setCache] = useState({});
+  const timer = useRef(null);
+  const started = useRef(false);
+
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    let stop = false;
+    (async () => {
+      const j = await (await fetch(`${API}/samples`)).json();
+      const allPairs = j.pairs || [];
+      const N = 6;
+      const step = Math.max(1, Math.floor(allPairs.length / N));
+      const pairs = allPairs.filter((_, i) => i % step === 0).slice(0, N);
+      const base = Date.now();
+      const all = pairs.map((p, i) => ({
+        key: p.id, id: p.id, camera: "CAM" + pad((i % 6) + 1),
+        thermal: p.thermal, rgb: p.rgb, csv: p.csv,
+        time: new Date(base - (pairs.length - i) * 60000).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }),
+        decision: null, fresh: false,
+      }));
+      // 첫 경보는 페이지 시작 즉시 표시, 이후 20초 간격. 분석은 자동 백그라운드(클릭 불필요).
+      for (let k = 0; k < all.length && !stop; k++) {
+        const a = all[k];
+        setAlerts((prev) => prev.some((x) => x.id === a.id) ? prev : [{ ...a, fresh: true }, ...prev]);
+        setCache((c) => ({ ...c, [a.id]: { loading: true } }));
+        analyze(a)
+          .then((res) => { if (!stop) setCache((c) => ({ ...c, [a.id]: { analysis: res } })); })
+          .catch((e) => { if (!stop) setCache((c) => ({ ...c, [a.id]: { error: String(e.message || e) } })); });
+        await new Promise((r) => { timer.current = setTimeout(r, 20000); });
+      }
+    })();
+    return () => { stop = true; clearTimeout(timer.current); };
+  }, []);
+
+  function select(a) {
+    setSelId(a.id);
+    setAlerts((prev) => prev.map((x) => (x.id === a.id ? { ...x, fresh: false } : x)));
+    if (!cache[a.id]) {
+      setCache((c) => ({ ...c, [a.id]: { loading: true } }));
+      analyze(a).then((res) => setCache((c) => ({ ...c, [a.id]: { analysis: res } })))
+                .catch((e) => setCache((c) => ({ ...c, [a.id]: { error: String(e.message || e) } })));
+    }
+  }
+
+  async function decide(a, d) {
+    setAlerts((prev) => prev.map((x) => (x.id === a.id ? { ...x, decision: d } : x)));
+    const an = (cache[a.id] || {}).analysis || {};
+    try {
+      await fetch(`${API}/decision`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          camera: a.camera, frame: a.id, operator: d,
+          system_status: an.status, thermal_dt: an.thermal_dt,
+          identified_heat_source: an.identified_heat_source, time: new Date().toISOString(),
+        }),
+      });
+    } catch (e) { /* 기록 실패 무시 */ }
+  }
+
+  const vis = alerts.filter((x) => x.id);
+  const sel = vis.find((x) => x.id === selId) || null;
+  const cur = sel ? cache[sel.id] || {} : {};
+  const pending = vis.filter((x) => !x.decision).length;
+
+  return html`
+    <div className="hdr">
+      <div className="brand">
+        <div className="mark"><${Icon} name="flame" size=${19} /></div>
+        <div><div className="t">ThermalGuard</div><div className="s">열화상 화재경보 관제</div></div>
+      </div>
+      <div className="sp" />
+      <div className="live"><span className="d" />실시간 감시</div>
+      <div className="iconbtn" role="button" tabIndex=${0} title="최신 미처리 경보로 이동" aria-label=${`미처리 경보 ${pending}건`}
+           onClick=${() => { const p = vis.find((x) => !x.decision); if (p) select(p); }}
+           onKeyDown=${(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); const p = vis.find((x) => !x.decision); if (p) select(p); } }}>
+        <${Icon} name="bell" size=${19} />${pending > 0 && html`<span className="badge num">${pending}</span>`}
+      </div>
+    </div>
+    <div className="wrap">
+      <div className="side">
+        <div className="side-h"><span className="ti">수신 경보</span><span className="chip num">${vis.length}</span></div>
+        <div className="feed">
+          ${vis.length === 0 && html`<div className="wait">경보 수신 대기 중<br/>백엔드 분석 후 도착합니다</div>`}
+          ${vis.map((a) => html`<${AlertCard} key=${a.key} a=${a} sel=${a.id === selId} an=${cache[a.id]} onClick=${() => select(a)} />`)}
+        </div>
+      </div>
+      <div className="main"><${Detail} alert=${sel} cur=${cur} onDecide=${decide} /></div>
+    </div>`;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(html`<${App} />`);
+</script>
+</body>
+</html>

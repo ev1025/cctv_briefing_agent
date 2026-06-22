@@ -88,7 +88,7 @@ button,input,select{font-family:inherit;}
     <!-- 좌: 입력 -->
     <div class="col">
       <div class="card-box">
-        <div class="box-title">🔥 알람 프레임 선택</div>
+        <div class="box-title">알람 프레임 선택</div>
         <div class="box-body">
           <div class="field"><label>샘플 페어</label><select id="pair"></select></div>
           <div class="field"><label>camera_id</label><input id="camera" value="CAM_T1" /></div>
@@ -156,7 +156,7 @@ async function loadPairs(){
     const sel = $('pair'); sel.innerHTML = '';
     if(!PAIRS.length){ sel.innerHTML = '<option value="">(샘플 없음 — 경로 직접 입력)</option>'; return; }
     PAIRS.forEach((p, i) => {
-      const o = document.createElement('option'); o.value = i; o.textContent = p.id + (p.csv ? ' (csv✓)' : '');
+      const o = document.createElement('option'); o.value = i; o.textContent = p.id + (p.csv ? ' (csv)' : '');
       sel.appendChild(o);
     });
     sel.onchange = () => selectPair(+sel.value);
@@ -166,9 +166,9 @@ async function loadPairs(){
 
 function setBadge(status){
   const b = $('badge');
-  if(status === 'DANGER'){ b.className='badge danger'; b.textContent='🔴 위험 (DANGER)'; }
-  else if(status === 'FALSE_ALARM'){ b.className='badge false'; b.textContent='🟢 오경보 (FALSE_ALARM)'; }
-  else { b.className='badge unknown'; b.textContent='⚠ ' + (status||'UNKNOWN'); }
+  if(status === 'DANGER'){ b.className='badge danger'; b.textContent='위험 (DANGER)'; }
+  else if(status === 'FALSE_ALARM'){ b.className='badge false'; b.textContent='오경보 (FALSE_ALARM)'; }
+  else { b.className='badge unknown'; b.textContent=(status||'UNKNOWN'); }
   return b.className.includes('danger') ? 'danger' : (b.className.includes('false') ? 'false' : '');
 }
 

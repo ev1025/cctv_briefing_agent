@@ -28,6 +28,15 @@ def index():
     return {"service": "cctv_briefing_agent", "docs": "/docs"}
 
 
+@app.get("/console")
+def console():
+    """작업자 관제 콘솔(React 단일 HTML): 경보 수신 -> 클릭 -> 이미지+분석 -> 최종 승인."""
+    p = os.path.join(config.FRONTEND_DIR, "console.html")
+    if os.path.isfile(p):
+        return FileResponse(p)
+    return {"error": "console.html 없음"}
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "cctv_briefing_agent"}
