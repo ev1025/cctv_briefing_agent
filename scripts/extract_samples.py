@@ -31,6 +31,7 @@ def main():
     ap.add_argument("--normal", type=int, default=3)
     ap.add_argument("--danger", type=int, default=3)
     ap.add_argument("--skip", type=int, default=0, help="각 status 앞 K개 건너뛰고 추출(held-out 분리용)")
+    ap.add_argument("--standard", default="", help="설비종류 필터(부분일치, 예: 배터리팩). 비우면 전체")
     args = ap.parse_args()
     if not args.data or not os.path.isdir(args.data):
         print("THERMAL_DATA_DIR(또는 --data)로 2.Validation 경로를 지정하세요.")
@@ -73,6 +74,8 @@ def main():
             c, skipped = 0, 0
             for fr in frames:
                 if fr["status"] != want or not have_all(fr):
+                    continue
+                if args.standard and args.standard not in fr["standard"]:  # 설비종류 필터
                     continue
                 if skipped < args.skip:        # held-out 분리: 앞 K개 건너뜀
                     skipped += 1

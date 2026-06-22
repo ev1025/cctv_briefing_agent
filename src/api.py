@@ -7,15 +7,30 @@ POST /api/v1/verify-fire-alarm :
 
 데모 보조: GET /api/v1/image(이미지 서빙), GET /api/v1/samples(열화상/실화상 페어 목록).
 """
+import json
 import os
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from . import config
 
 router = APIRouter(prefix="/api/v1", tags=["false-alarm-filter"])
+
+
+@router.post("/decision")
+def decision(payload: dict = Body(...)):
+    """작업자 최종 판단 기록(데이터 선순환). outputs/decisions.jsonl 에 한 줄씩 append.
+
+    저장 레코드(클라이언트가 보냄): camera, frame, system_status, thermal_dt,
+      identified_heat_source, operator(=confirm|reject), time. 나중에 임계 튜닝·재학습 GT 로 재활용.
+    """
+    path = os.path.join(config.PROJECT_DIR, "outputs", "decisions.jsonl")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    return {"ok": True}
 
 
 @router.get("/health")
@@ -63,17 +78,12 @@ def _thermal_summary(csv_path):
     return tf["summary"] if tf else None
 
 
-# 온도가 명백히 낮은데도 알람이 뜬 경우/양성 열원 키워드(실화상 식별로 오경보 강등)
-#   양성 열원 '객체' 키워드. '반사' 계열은 설비 표면 묘사에도 흔히 섞여 오강등을 유발하므로 제외.
-_BENIGN_KEYWORDS = ("사람", "행인", "작업자", "조명", "전등", "햇빛", "햇볕", "햇살", "차량")
-
-
 def run_verify(thermal_path, rgb_path, csv_path=None):
     """열화상 알람 검증. 온도 1차 게이트 -> 위험 후보만 VLM 2차 크로스체크.
 
     순서(온도 CSV 있을 때):
       1) 핫스팟 ΔT < 임계  -> 즉시 FALSE_ALARM (VLM 생략, ~0초; 과열 아님)
-      2) ΔT >= 임계        -> VLM 실행 -> 양성 열원(사람·조명·햇빛 반사)이면 FALSE_ALARM, 아니면 DANGER
+      2) ΔT >= 임계        -> VLM 실행 -> VLM 판정(vlm_status)을 최종 판정으로(애매하면 DANGER)
     CSV 없으면 게이트 없이 VLM 판정을 그대로 사용.
     """
     import time
@@ -103,13 +113,11 @@ def run_verify(thermal_path, rgb_path, csv_path=None):
     v = vlm_analyzer.verify_fire_alarm(thermal_path, rgb_path, temp_summary)
     vlm_total_ms = round((time.time() - t0) * 1000)
 
-    # VLM 까지 해석이 온 경우 -> source 는 'VLM'(게이트 통과/CSV 없음 모두). eval 의 vlm 분리와 일치.
-    status, source = v.get("status"), "VLM"
-    if tf is not None:
-        # 양성 강등은 '식별된 객체' 가 양성 열원일 때만(추론 본문의 stray '햇빛' 언급 등은 무시).
-        heat = v.get("identified_heat_source") or ""
-        benign = any(k in heat for k in _BENIGN_KEYWORDS)
-        status = "FALSE_ALARM" if benign else "DANGER"
+    # VLM 발동 시 vlm_status 를 그대로 최종 판정으로 사용(양성/위험 판단은 VLM 의 ②양성여부 판정에 일임).
+    #   애매(UNKNOWN 등)하면 게이트가 이미 과열로 봤으니 안전하게 DANGER.
+    vstatus = v.get("status")
+    status = vstatus if vstatus in ("DANGER", "FALSE_ALARM") else "DANGER"
+    source = "VLM"
 
     return {
         "status": status,

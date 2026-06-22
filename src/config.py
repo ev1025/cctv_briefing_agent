@@ -58,11 +58,21 @@ def build_quant_config():
         bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True)
 
 
-# === 5) 온도 판정 보정 ===
-#   핫스팟 ΔT(p99 - 장면 중앙값)가 이 값 이상이면 과열 위험으로 게이트(run_verify 1차 게이트).
-#   주의: 보유 슬라이스(태양광)에서 calib 한 값(normal p99-med ≤7.2 / danger ≥9.2 → 중간 ~8).
-#   설비 종류·사이트마다 재보정 필요. env THERMAL_DANGER_DELTA_C 로 조정.
-THERMAL_DANGER_DELTA_C = float(os.environ.get("THERMAL_DANGER_DELTA_C", "8.0"))
+# === 5) 설비별 온도 판정 규칙 (라우터) ===
+# 설비별 위험 판별(온도 게이트) 방식이 다르기 때문에 라우터를 통해 설비별 분류
+# 태양광   = 온도 상위 1%(p99)와 장면 중앙값의 차이(상대 ΔT) ΔT < 0.8이면 normal, ΔT >= 8.0 -> 임계 ~8.
+# 배터리팩 = 균일 과열(열폭주) -> 상대 ΔT 안 큼(둘 다 ~2°C). 대신 절대 핫스팟(p99) 온도로 갈림:
+# normal 28.0~28.4 / danger 29.3~30.0 -> 임계 ~28.8.
+# run_verify 가 VLM 으로 식별한 설비에 맞는 규칙으로 라우팅. 사이트·계절(절대온도는 환경 의존)마다 재보정 필요.
+THERMAL_DANGER_DELTA_C = float(os.environ.get("THERMAL_DANGER_DELTA_C", "8.0"))   # 태양광: 상대 ΔT
+BATTERY_DANGER_TEMP_C = float(os.environ.get("BATTERY_DANGER_TEMP_C", "28.8"))    # 배터리팩: 절대 핫스팟(p99)
+
+
+def thermal_rule_for(heat_source):
+    """식별된 설비 -> (mode, threshold, label). 배터리팩=절대온도, 그 외(태양광 등)=상대 ΔT 기본."""
+    if heat_source and "배터리" in heat_source:
+        return ("abs", BATTERY_DANGER_TEMP_C, "절대온도")
+    return ("delta", THERMAL_DANGER_DELTA_C, "상대ΔT")
 
 # === 6) 프롬프트 (체인 룰: 객체식별 -> 위험판정 -> 근거, 각각 별도 호출) ===
 #   2B 모델엔 JSON 다필드 강제(긴 출력 -> 루프/잘림)보다 '한 번에 하나씩' 묻는 체인이 빠르고 정확.
@@ -74,7 +84,7 @@ VERIFY_SYSTEM_PROMPT = (
 #   1단계 — 핫스팟 객체 식별. 2B 가 평서문으로 풀어쓰는 걸 막으려고 '후보 목록 객관식'(구분자 없이 평문).
 #   sLLM 은 <> [] 같은 특수 구분자를 잘 못 따르므로, 후보 단어를 주고 하나만 고르게 한다(코드가 매칭).
 VERIFY_OBJECT_CHOICES = (
-    "태양광 패널", "배전반", "변압기", "전동기", "배관", "케이블", "사람", "조명", "차량", "햇빛", "기타",
+    "태양광", "배터리팩", "배전반", "변압기", "전동기", "배관", "케이블", "사람", "조명", "차량", "햇빛", "기타",
 )
 VERIFY_OBJECT_PROMPT = (
     "열화상에서 가장 뜨거운 지점이 실화상에서 무슨 물체인지, 아래 목록 중 가장 가까운 것 하나만 그 단어 그대로 답하라.\n"
