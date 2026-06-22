@@ -57,8 +57,8 @@ cctv_briefing_agent/
 ├── README.md
 ├── frontend/index.html        # 2화면(열화상|실화상) + 판정 배지
 └── src/
-    ├── config.py              # 모델/프롬프트/온도임계/JSON스키마
-    ├── vlm_analyzer.py        # Qwen3-VL 2이미지 추론 + JSON 강제
+    ├── config.py              # 모델/프롬프트/온도임계/객관식 후보
+    ├── vlm_analyzer.py        # Qwen3-VL 2이미지 3단계 체인 추론(객체/위험/근거)
     ├── api.py                 # run_verify(융합) + 엔드포인트 + 온도 CSV 파서
     └── main.py                # FastAPI 앱 (/ 프론트 서빙)
 scripts/
@@ -71,6 +71,6 @@ scripts/
 
 ```bash
 pip install -r requirements.txt          # torch 는 GPU CUDA 빌드 별도 설치 권장
-SAMPLE_DIR=samples uvicorn src.main:app --host 0.0.0.0 --port 8011
+SAMPLE_DIR=data/samples uvicorn src.main:app --host 0.0.0.0 --port 8011
 # 브라우저로 http://localhost:8011  (또는 POST /api/v1/verify-fire-alarm)
 ```

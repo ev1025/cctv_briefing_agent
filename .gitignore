@@ -23,9 +23,9 @@ docs/*업무보고서*.md
 *.bin
 *.safetensors
 
-# 샘플 데이터 (AIHub 514 — 내국인 한정 라이선스, 커밋 금지)
-samples/
-samples_test/
+# 샘플/검증 데이터 (AIHub 514 — 내국인 한정 라이선스, 커밋 금지)
+#   data/samples=보정셋, data/samples_test=검증셋
+data/
 *.csv
 
 # 환경 변수

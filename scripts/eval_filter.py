@@ -1,6 +1,6 @@
 """eval_filter.py - 오경보 필터 정확도 평가
 
-samples/manifest.json(라벨 데이터 샘플)과 verify_fire_alarm 예측을 비교
+data/samples/manifest.json(라벨 데이터 샘플)과 verify_fire_alarm 예측을 비교
 GT 매핑: danger -> DANGER(위험, 실제 과열), normal -> FALSE_ALARM(오경보, 정상 발열).
 
 실행(프로젝트 루트):
