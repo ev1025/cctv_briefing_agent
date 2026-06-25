@@ -20,9 +20,9 @@ if os.path.isdir(_DATA2) and "HF_HOME" not in os.environ:
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))      # .../cctv_briefing_agent/src
 PROJECT_DIR = os.path.dirname(BASE_DIR)                     # .../cctv_briefing_agent
 FRONTEND_DIR = os.path.join(PROJECT_DIR, "frontend")
-#   데모용 열화상/실화상 페어 폴더. 개인 절대경로는 커밋하지 않음(기본 data/samples/, env SAMPLE_DIR).
+#   데모용 열화상/실화상 페어 폴더. 개인 절대경로는 커밋하지 않음(기본 LLM/DATA/images/thermal/samples, env SAMPLE_DIR).
 #   data/ 아래: samples=보정셋(임계 calib), samples_test=검증셋(held-out). 둘 다 AIHub라 gitignore.
-SAMPLE_DIR = os.environ.get("SAMPLE_DIR", os.path.join(PROJECT_DIR, "data", "samples"))
+SAMPLE_DIR = os.environ.get("SAMPLE_DIR", os.path.join(os.path.dirname(PROJECT_DIR), "DATA", "images", "thermal", "samples"))
 
 # === 4) VLM (Qwen3-VL-2B) ===
 #   주의: 'Qwen/Qwen2.5-VL-2B-Instruct' 는 실재하지 않는 ID 다(2.5-VL 은 3B/7B/.. 만, 2B 는 Qwen3-VL).
